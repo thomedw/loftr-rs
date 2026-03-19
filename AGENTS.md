@@ -24,9 +24,17 @@ cargo check --workspace --all-targets --features download-libtorch
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 ./scripts/prepare_test_fixtures.sh
 cargo test --workspace --features download-libtorch
+cargo llvm-cov --workspace --features download-libtorch --locked --fail-under-lines 80
+cargo llvm-cov --workspace --features download-libtorch --locked --html --output-dir target/llvm-cov/html --fail-under-lines 80
 cargo test --doc -p loftr --features doc-only
 cargo deny check
 cargo publish --dry-run -p loftr --locked --features download-libtorch
+```
+
+Install `cargo-llvm-cov` once before using the local coverage commands:
+
+```bash
+cargo install cargo-llvm-cov
 ```
 
 ### With `just`
@@ -39,6 +47,8 @@ just check
 just clippy
 just prepare-test-fixtures
 just test
+just coverage
+just coverage-html
 just publish-dry-run
 just release-notes 0.1.0
 just changelog 0.1.0
@@ -98,6 +108,7 @@ Internal LoFTR building blocks such as the backbone, transformer, attention, and
 
 - Rust edition **2024**, MSRV **1.85.0**
 - Run `rustfmt`, `clippy`, and the relevant tests before every commit
+- Run coverage for Rust code changes before opening a PR
 - Warnings are denied in CI
 - The workspace enables `clippy::all`, `clippy::cargo`, and `clippy::pedantic`
 - Prefer **borrowing over cloning**, especially for tensors and image buffers
@@ -179,6 +190,7 @@ Rules:
    cargo clippy --workspace --all-targets --all-features -- -D warnings
    ./scripts/prepare_test_fixtures.sh
    cargo test --workspace --features download-libtorch
+   cargo llvm-cov --workspace --features download-libtorch --locked --fail-under-lines 80
    cargo deny check
    ```
 
@@ -206,6 +218,7 @@ Rules:
 - [ ] `cargo fmt --all` passes
 - [ ] `cargo clippy --workspace --all-targets --all-features -- -D warnings` passes
 - [ ] `cargo test --workspace --features download-libtorch` passes
+- [ ] `cargo llvm-cov --workspace --features download-libtorch --locked --fail-under-lines 80` passes
 - [ ] `cargo deny check` passes
 - [ ] Public API docs were updated if needed
 - [ ] No model weights or generated artifacts are staged

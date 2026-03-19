@@ -16,6 +16,16 @@ test:
     ./scripts/prepare_test_fixtures.sh
     cargo test --workspace --features download-libtorch
 
+coverage:
+    ./scripts/prepare_test_fixtures.sh
+    cargo llvm-cov clean --workspace
+    cargo llvm-cov --workspace --features download-libtorch --locked --fail-under-lines 80
+
+coverage-html:
+    ./scripts/prepare_test_fixtures.sh
+    cargo llvm-cov clean --workspace
+    cargo llvm-cov --workspace --features download-libtorch --locked --html --output-dir target/llvm-cov/html --fail-under-lines 80
+
 publish-dry-run:
     cargo publish --dry-run -p loftr --locked --features download-libtorch
 
