@@ -1,15 +1,20 @@
-use std::{env, path::PathBuf};
+use std::{
+    error::Error,
+    path::{Path, PathBuf},
+};
 
 use image::{DynamicImage, imageops::FilterType};
 use loftr::{LoftrConfig, LoftrModel};
 use tch::{Device, Kind, Tensor};
 
+const FIXTURE_SETUP_HINT: &str =
+    "run `./scripts/prepare_test_fixtures.sh` from the workspace root and retry";
+
 #[test]
-#[ignore = "requires local weights and image paths via environment variables"]
-fn end_to_end_matching_with_local_weights() -> Result<(), Box<dyn std::error::Error>> {
-    let weights = env_path("LOFTR_TEST_WEIGHTS")?;
-    let left = env_path("LOFTR_TEST_LEFT")?;
-    let right = env_path("LOFTR_TEST_RIGHT")?;
+fn end_to_end_matching_with_prepared_fixtures() -> Result<(), Box<dyn Error>> {
+    let weights = fixture_path("loftr_outdoor_state_dict.safetensors")?;
+    let left = fixture_path("kn_church-2.jpg")?;
+    let right = fixture_path("kn_church-8.jpg")?;
 
     let mut model = LoftrModel::new(Device::Cpu, LoftrConfig::outdoor())?;
     model.load_weights(&weights)?;
@@ -24,14 +29,22 @@ fn end_to_end_matching_with_local_weights() -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
-fn env_path(name: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    match env::var(name) {
-        Ok(path) => Ok(PathBuf::from(path)),
-        Err(_) => Err(format!("missing environment variable {name}").into()),
+fn fixture_path(name: &str) -> Result<PathBuf, Box<dyn Error>> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/data")
+        .join(name);
+    if path.is_file() {
+        Ok(path)
+    } else {
+        Err(format!(
+            "missing test fixture `{name}` at `{}`; {FIXTURE_SETUP_HINT}",
+            path.display()
+        )
+        .into())
     }
 }
 
-fn load_grayscale(path: &PathBuf) -> Result<Tensor, image::ImageError> {
+fn load_grayscale(path: &Path) -> Result<Tensor, image::ImageError> {
     let image = image::open(path)?;
     let image = resize_for_loftr(&image);
     let image = image.to_luma32f();

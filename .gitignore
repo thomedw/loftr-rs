@@ -1,6 +1,7 @@
 /target
 /.idea
 /.vscode
+.venv-loftr/
 .DS_Store
 artifacts/weights/
 crates/loftr/tests/data/
@@ -8,4 +9,3 @@ crates/loftr/tests/data/
 *.pt
 *.pth
 *.onnx
-

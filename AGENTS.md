@@ -22,6 +22,7 @@ Run commands from the repository root.
 cargo fmt --all
 cargo check --workspace --all-targets --features download-libtorch
 cargo clippy --workspace --all-targets --all-features -- -D warnings
+./scripts/prepare_test_fixtures.sh
 cargo test --workspace --features download-libtorch
 cargo test --doc -p loftr --features doc-only
 cargo deny check
@@ -36,6 +37,7 @@ If `just` is installed, these shortcuts map to the common local workflow:
 just fmt
 just check
 just clippy
+just prepare-test-fixtures
 just test
 just publish-dry-run
 just release-notes 0.1.0
@@ -46,6 +48,7 @@ just changelog 0.1.0
 
 ```bash
 ./scripts/generate_loftr_state_dict.sh
+./scripts/prepare_test_fixtures.sh
 ./scripts/validate_loftr_against_kornia.sh <left> <right>
 python3 scripts/update_changelog.py CHANGELOG.md target/release-notes.md
 ```
@@ -84,6 +87,7 @@ Internal LoFTR building blocks such as the backbone, transformer, attention, and
 
 - Generated weights belong under `artifacts/weights/`
 - `artifacts/weights/` is intentionally gitignored
+- `crates/loftr/tests/data/` is a generated fixture cache and is intentionally gitignored
 - Never commit `.safetensors`, `.pt`, `.pth`, `.onnx`, or other generated model artifacts
 
 ---
@@ -173,6 +177,7 @@ Rules:
    ```bash
    cargo fmt --all
    cargo clippy --workspace --all-targets --all-features -- -D warnings
+   ./scripts/prepare_test_fixtures.sh
    cargo test --workspace --features download-libtorch
    cargo deny check
    ```
