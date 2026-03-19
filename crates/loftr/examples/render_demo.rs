@@ -14,20 +14,37 @@ struct MatchViz {
     confidence: f32,
 }
 
+#[derive(Debug)]
+struct MatchSelection {
+    visible: Vec<MatchViz>,
+    total: usize,
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = env::args().collect();
-    if !(args.len() == 5 || args.len() == 6) {
+    if !(args.len() >= 5 && args.len() <= 7) {
         eprintln!(
-            "usage: cargo run -p loftr --example render_demo -- <weights> <left> <right> <output> [max_matches]"
+            "usage: cargo run -p loftr --example render_demo -- <weights> <left> <right> <output> [top_k] [bottom_k]"
         );
         std::process::exit(2);
     }
 
-    let max_matches = args
+    let top_k = args
         .get(5)
         .map(|value| value.parse::<usize>())
         .transpose()?
-        .unwrap_or(96);
+        .unwrap_or(2000);
+    let bottom_k = args
+        .get(6)
+        .map(|value| value.parse::<usize>())
+        .transpose()?
+        .unwrap_or(0);
+
+    if bottom_k > top_k {
+        return Err(
+            format!("bottom_k must be <= top_k; got bottom_k={bottom_k}, top_k={top_k}").into(),
+        );
+    }
 
     let mut model = LoftrModel::new(Device::Cpu, LoftrConfig::outdoor())?;
     model.load_weights(&args[1])?;
@@ -35,20 +52,22 @@ fn main() -> Result<(), Box<dyn Error>> {
     let (left_tensor, left_preview) = load_grayscale(Path::new(&args[2]))?;
     let (right_tensor, right_preview) = load_grayscale(Path::new(&args[3]))?;
     let matches = model.forward(&left_tensor, &right_tensor)?;
-    let selected = select_matches(
-        &matches,
-        left_preview.width(),
-        left_preview.height(),
-        max_matches,
-    )?;
+    let selection = select_matches(&matches, top_k, bottom_k)?;
     render_demo(
         &left_preview,
         &right_preview,
-        &selected,
+        &selection.visible,
         Path::new(&args[4]),
     )?;
 
-    println!("rendered {} matches to {}", selected.len(), args[4]);
+    println!(
+        "rendered {} of {} matches to {} (showing range {}:{})",
+        selection.visible.len(),
+        selection.total,
+        args[4],
+        bottom_k,
+        top_k
+    );
     Ok(())
 }
 
@@ -77,10 +96,9 @@ fn resize_for_loftr(image: DynamicImage) -> DynamicImage {
 
 fn select_matches(
     matches: &LoftrMatches,
-    width: u32,
-    height: u32,
-    max_matches: usize,
-) -> Result<Vec<MatchViz>, Box<dyn Error>> {
+    top_k: usize,
+    bottom_k: usize,
+) -> Result<MatchSelection, Box<dyn Error>> {
     let keypoints0 = tensor_to_points(&matches.keypoints0)?;
     let keypoints1 = tensor_to_points(&matches.keypoints1)?;
     let confidence = Vec::<f32>::try_from(matches.confidence.reshape([-1]))?;
@@ -103,44 +121,11 @@ fn select_matches(
             .unwrap_or(Ordering::Equal)
     });
 
-    let cols = 12usize;
-    let rows = 8usize;
-    let mut occupied = vec![false; cols * rows];
-    let mut used = vec![false; candidates.len()];
-    let mut selected = Vec::with_capacity(max_matches.min(candidates.len()));
-
-    for (index, candidate) in candidates.iter().enumerate() {
-        let cell = grid_index(candidate.start, width, height, cols, rows);
-        if occupied[cell] {
-            continue;
-        }
-        occupied[cell] = true;
-        used[index] = true;
-        selected.push(candidate.clone());
-        if selected.len() == max_matches {
-            return Ok(selected);
-        }
-    }
-
-    for (index, candidate) in candidates.iter().enumerate() {
-        if used[index] {
-            continue;
-        }
-        selected.push(candidate.clone());
-        if selected.len() == max_matches {
-            break;
-        }
-    }
-
-    Ok(selected)
-}
-
-fn grid_index(point: (f32, f32), width: u32, height: u32, cols: usize, rows: usize) -> usize {
-    let x = (point.0 / width as f32).clamp(0.0, 0.999_999);
-    let y = (point.1 / height as f32).clamp(0.0, 0.999_999);
-    let col = (x * cols as f32) as usize;
-    let row = (y * rows as f32) as usize;
-    row * cols + col
+    let total = candidates.len();
+    let end = top_k.min(total);
+    let start = bottom_k.min(end);
+    let visible = candidates[start..end].to_vec();
+    Ok(MatchSelection { visible, total })
 }
 
 fn tensor_to_points(tensor: &Tensor) -> Result<Vec<(f32, f32)>, Box<dyn Error>> {
@@ -186,8 +171,17 @@ fn render_demo(
     blit_grayscale(&mut canvas, left, left_origin);
     blit_grayscale(&mut canvas, right, right_origin);
 
-    for (index, matched) in matches.iter().enumerate() {
-        let color = palette(index, matches.len());
+    let max_confidence = matches
+        .iter()
+        .fold(0.0_f32, |acc, matched| acc.max(matched.confidence));
+
+    for matched in matches {
+        let normalized = if max_confidence > 1e-5 {
+            (matched.confidence / (max_confidence + 1e-5)).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let color = jet_color(normalized);
         let start = (
             left_origin.0 as f32 + matched.start.0,
             left_origin.1 as f32 + matched.start.1,
@@ -196,22 +190,22 @@ fn render_demo(
             right_origin.0 as f32 + matched.end.0,
             right_origin.1 as f32 + matched.end.1,
         );
-        draw_line(&mut canvas, start, end, color, 0.68);
+        draw_line(&mut canvas, start, end, color, 0.8);
         draw_disc(
             &mut canvas,
             start.0.round() as i32,
             start.1.round() as i32,
-            3,
+            2,
             color,
-            0.95,
+            1.0,
         );
         draw_disc(
             &mut canvas,
             end.0.round() as i32,
             end.1.round() as i32,
-            3,
+            2,
             color,
-            0.95,
+            1.0,
         );
     }
 
@@ -240,30 +234,16 @@ fn blit_grayscale(canvas: &mut RgbImage, image: &GrayImage, origin: (u32, u32)) 
     }
 }
 
-fn palette(index: usize, count: usize) -> Rgb<u8> {
-    let hue = 0.05 + 0.85 * (index as f32 / count.max(1) as f32);
-    let (red, green, blue) = hsv_to_rgb(hue.fract(), 0.72, 0.96);
+fn jet_color(value: f32) -> Rgb<u8> {
+    let x = value.clamp(0.0, 1.0);
+    let red = (1.5 - (4.0 * x - 3.0).abs()).clamp(0.0, 1.0);
+    let green = (1.5 - (4.0 * x - 2.0).abs()).clamp(0.0, 1.0);
+    let blue = (1.5 - (4.0 * x - 1.0).abs()).clamp(0.0, 1.0);
     Rgb([
         (red * 255.0).round() as u8,
         (green * 255.0).round() as u8,
         (blue * 255.0).round() as u8,
     ])
-}
-
-fn hsv_to_rgb(hue: f32, saturation: f32, value: f32) -> (f32, f32, f32) {
-    let chroma = value * saturation;
-    let scaled = hue * 6.0;
-    let x = chroma * (1.0 - ((scaled % 2.0) - 1.0).abs());
-    let (red, green, blue) = match scaled as i32 {
-        0 => (chroma, x, 0.0),
-        1 => (x, chroma, 0.0),
-        2 => (0.0, chroma, x),
-        3 => (0.0, x, chroma),
-        4 => (x, 0.0, chroma),
-        _ => (chroma, 0.0, x),
-    };
-    let match_value = value - chroma;
-    (red + match_value, green + match_value, blue + match_value)
 }
 
 fn draw_line(

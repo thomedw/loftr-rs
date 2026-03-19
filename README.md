@@ -20,7 +20,8 @@ The left image is the original Kornia LoFTR application demo from the
 The right image is generated locally with the Rust visualizer example in this repo, using the same
 `kn_church-2.jpg` and `kn_church-8.jpg` pair that Kornia uses in its LoFTR tutorial. Kornia resizes
 that pair to `600x375` (`H x W`); the current native port rounds the width up to `376` to keep the
-fine-matching scale integral:
+fine-matching scale integral. The visualizer uses a confidence-colored top-k rendering similar to
+the original LoFTR demo:
 
 ```bash
 curl -L -o /tmp/kn_church-2.jpg https://github.com/kornia/data/raw/main/matching/kn_church-2.jpg
@@ -29,8 +30,7 @@ cargo run -p loftr --example render_demo --features download-libtorch -- \
   /path/to/loftr_outdoor_state_dict.safetensors \
   /tmp/kn_church-2.jpg \
   /tmp/kn_church-8.jpg \
-  docs/images/loftr-rs-demo-rust.png \
-  64
+  docs/images/loftr-rs-demo-rust.png
 ```
 
 ## Current Scope
