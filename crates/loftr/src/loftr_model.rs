@@ -9,7 +9,7 @@ use tch::{
 
 use crate::{
     backbone::{Backbone, build_backbone},
-    coarse_matching::{CoarseMatching, CoarseMatchingData},
+    coarse_matching::{CoarseMatching, CoarseMatchingData, CoarseMatchingOutput},
     error::LoftrError,
     fine_matching::{FineMatching, FineMatchingData},
     fine_preprocess::{FinePreprocess, FinePreprocessData},
@@ -29,7 +29,6 @@ pub struct LoFTRModel {
     coarse_matching: CoarseMatching,
     fine_preprocess: FinePreprocess,
     loftr_fine: LocalFeatureTransformer,
-    fine_matching: FineMatching,
 }
 
 #[derive(Debug, Serialize)]
@@ -70,6 +69,12 @@ pub struct LoftrDebugStages {
 }
 
 impl LoFTRModel {
+    /// Builds a `LoFTR` model on the requested device.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the model configuration is invalid or one of the
+    /// internal modules cannot be constructed.
     pub fn new(device: Device, config: LoftrConfig) -> Result<Self, LoftrError> {
         let var_store = nn::VarStore::new(device);
         let root = var_store.root();
@@ -103,10 +108,10 @@ impl LoFTRModel {
             coarse_matching,
             fine_preprocess,
             loftr_fine,
-            fine_matching: FineMatching,
         })
     }
 
+    #[must_use]
     pub fn var_store(&self) -> &VarStore {
         &self.var_store
     }
@@ -115,10 +120,22 @@ impl LoFTRModel {
         &mut self.var_store
     }
 
+    /// Loads model weights from a `safetensors` or Torch-compatible checkpoint.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the file cannot be read or does not match the
+    /// variables defined by this model.
     pub fn load_weights<P: AsRef<Path>>(&mut self, path: P) -> Result<(), LoftrError> {
         self.var_store.load(path).map_err(LoftrError::from)
     }
 
+    /// Runs `LoFTR` inference for one batch of image pairs.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the input shapes are unsupported or if any stage of
+    /// the network execution fails.
     pub fn forward(
         &mut self,
         image0: &Tensor,
@@ -128,6 +145,12 @@ impl LoFTRModel {
         Ok(stages.matches)
     }
 
+    /// Runs `LoFTR` inference and returns intermediate debug statistics.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the input shapes are unsupported or if any stage of
+    /// the network execution fails.
     pub fn forward_debug(
         &mut self,
         image0: &Tensor,
@@ -148,49 +171,18 @@ impl LoFTRModel {
         let hw0_i = (image0.size()[2], image0.size()[3]);
         let hw1_i = (image1.size()[2], image1.size()[3]);
 
-        let ((feat_c0_backbone, feat_f0_backbone), (feat_c1_backbone, feat_f1_backbone)) =
-            if hw0_i == hw1_i {
-                let images = Tensor::cat(&[image0.shallow_clone(), image1.shallow_clone()], 0);
-                let (feat_c, feat_f) = self.backbone.forward_t(&images, false)?;
-                let feat_c = feat_c.split(batch_size, 0);
-                let feat_f = feat_f.split(batch_size, 0);
-                (
-                    (feat_c[0].shallow_clone(), feat_f[0].shallow_clone()),
-                    (feat_c[1].shallow_clone(), feat_f[1].shallow_clone()),
-                )
-            } else {
-                (
-                    self.backbone.forward_t(&image0, false)?,
-                    self.backbone.forward_t(&image1, false)?,
-                )
-            };
-
-        let hw0_c = (feat_c0_backbone.size()[2], feat_c0_backbone.size()[3]);
-        let hw1_c = (feat_c1_backbone.size()[2], feat_c1_backbone.size()[3]);
-        let hw0_f = (feat_f0_backbone.size()[2], feat_f0_backbone.size()[3]);
-
-        let feat_c0_pos = self
-            .pos_encoding
-            .forward(&feat_c0_backbone)?
-            .permute([0, 2, 3, 1])
-            .reshape([batch_size, -1, self.config.coarse.d_model]);
-        let feat_c1_pos = self
-            .pos_encoding
-            .forward(&feat_c1_backbone)?
-            .permute([0, 2, 3, 1])
-            .reshape([batch_size, -1, self.config.coarse.d_model]);
-        let (feat_c0_coarse, feat_c1_coarse) =
-            self.loftr_coarse
-                .forward(&feat_c0_pos, &feat_c1_pos, None, None)?;
+        let backbone_features =
+            self.backbone_features(&image0, &image1, batch_size, hw0_i, hw1_i)?;
+        let coarse_features = self.coarse_features(&backbone_features, batch_size)?;
 
         let coarse = self.coarse_matching.forward(
-            &feat_c0_coarse,
-            &feat_c1_coarse,
+            &coarse_features.transformed0,
+            &coarse_features.transformed1,
             &CoarseMatchingData {
                 hw0_i,
                 hw1_i,
-                hw0_c,
-                hw1_c,
+                hw0_c: coarse_features.hw0_c,
+                hw1_c: coarse_features.hw1_c,
                 scale0: None,
                 scale1: None,
             },
@@ -199,13 +191,13 @@ impl LoFTRModel {
         )?;
 
         let (mut feat_f0_unfold, mut feat_f1_unfold) = self.fine_preprocess.forward(
-            &feat_f0_backbone,
-            &feat_f1_backbone,
-            &feat_c0_coarse,
-            &feat_c1_coarse,
+            &backbone_features.fine0,
+            &backbone_features.fine1,
+            &coarse_features.transformed0,
+            &coarse_features.transformed1,
             &FinePreprocessData {
-                hw0_f,
-                hw0_c,
+                hw0_f: coarse_features.hw0_f,
+                hw0_c: coarse_features.hw0_c,
                 b_ids: coarse.b_ids.shallow_clone(),
                 i_ids: coarse.i_ids.shallow_clone(),
                 j_ids: coarse.j_ids.shallow_clone(),
@@ -219,12 +211,12 @@ impl LoFTRModel {
             feat_f1_unfold = next1;
         }
 
-        let fine = self.fine_matching.forward(
+        let fine = FineMatching::forward(
             &feat_f0_unfold,
             &feat_f1_unfold,
             &FineMatchingData {
                 hw0_i,
-                hw0_f,
+                hw0_f: coarse_features.hw0_f,
                 mkpts0_c: coarse.mkpts0_c.shallow_clone(),
                 mkpts1_c: coarse.mkpts1_c.shallow_clone(),
                 mconf: coarse.mconf.shallow_clone(),
@@ -240,31 +232,123 @@ impl LoFTRModel {
                 confidence: coarse.mconf.shallow_clone(),
                 batch_indexes: coarse.m_bids.shallow_clone(),
             },
-            debug: LoftrDebugStages {
-                image0: tensor_debug_stats(&image0),
-                image1: tensor_debug_stats(&image1),
-                feat_c0_backbone: tensor_debug_stats(&feat_c0_backbone),
-                feat_c1_backbone: tensor_debug_stats(&feat_c1_backbone),
-                feat_f0_backbone: tensor_debug_stats(&feat_f0_backbone),
-                feat_f1_backbone: tensor_debug_stats(&feat_f1_backbone),
-                feat_c0_pos: tensor_debug_stats(&feat_c0_pos),
-                feat_c1_pos: tensor_debug_stats(&feat_c1_pos),
-                feat_c0_coarse: tensor_debug_stats(&feat_c0_coarse),
-                feat_c1_coarse: tensor_debug_stats(&feat_c1_coarse),
-                coarse: CoarseDebugStats {
-                    conf_matrix: tensor_debug_stats(&coarse.conf_matrix),
-                    threshold_count: coarse
-                        .conf_matrix
-                        .gt(self.config.match_coarse.thr)
-                        .sum(Kind::Int64)
-                        .int64_value(&[]),
-                    mutual_count: confidence_mutual_count(&coarse.conf_matrix),
-                    match_count: coarse.mconf.size()[0],
-                    confidence_mean: mean_or_zero(&coarse.mconf),
-                    confidence_max: max_or_zero(&coarse.mconf),
-                },
-            },
+            debug: self.build_debug_stages(
+                &image0,
+                &image1,
+                &backbone_features,
+                &coarse_features,
+                &coarse,
+            ),
         })
+    }
+
+    fn backbone_features(
+        &self,
+        image0: &Tensor,
+        image1: &Tensor,
+        batch_size: i64,
+        hw0_i: (i64, i64),
+        hw1_i: (i64, i64),
+    ) -> Result<BackboneFeatures, LoftrError> {
+        if hw0_i == hw1_i {
+            let stacked_images = Tensor::cat(&[image0.shallow_clone(), image1.shallow_clone()], 0);
+            let (coarse_backbone, fine_backbone) =
+                self.backbone.forward_t(&stacked_images, false)?;
+            let coarse_backbone = coarse_backbone.split(batch_size, 0);
+            let fine_backbone = fine_backbone.split(batch_size, 0);
+            return Ok(BackboneFeatures {
+                coarse0: coarse_backbone[0].shallow_clone(),
+                coarse1: coarse_backbone[1].shallow_clone(),
+                fine0: fine_backbone[0].shallow_clone(),
+                fine1: fine_backbone[1].shallow_clone(),
+            });
+        }
+
+        let (coarse0, fine0) = self.backbone.forward_t(image0, false)?;
+        let (coarse1, fine1) = self.backbone.forward_t(image1, false)?;
+        Ok(BackboneFeatures {
+            coarse0,
+            coarse1,
+            fine0,
+            fine1,
+        })
+    }
+
+    fn coarse_features(
+        &mut self,
+        backbone_features: &BackboneFeatures,
+        batch_size: i64,
+    ) -> Result<CoarseFeatures, LoftrError> {
+        let hw0_c = (
+            backbone_features.coarse0.size()[2],
+            backbone_features.coarse0.size()[3],
+        );
+        let hw1_c = (
+            backbone_features.coarse1.size()[2],
+            backbone_features.coarse1.size()[3],
+        );
+        let hw0_f = (
+            backbone_features.fine0.size()[2],
+            backbone_features.fine0.size()[3],
+        );
+
+        let positional0 = self
+            .pos_encoding
+            .forward(&backbone_features.coarse0)?
+            .permute([0, 2, 3, 1])
+            .reshape([batch_size, -1, self.config.coarse.d_model]);
+        let positional1 = self
+            .pos_encoding
+            .forward(&backbone_features.coarse1)?
+            .permute([0, 2, 3, 1])
+            .reshape([batch_size, -1, self.config.coarse.d_model]);
+        let (transformed0, transformed1) =
+            self.loftr_coarse
+                .forward(&positional0, &positional1, None, None)?;
+
+        Ok(CoarseFeatures {
+            hw0_c,
+            hw1_c,
+            hw0_f,
+            positional0,
+            positional1,
+            transformed0,
+            transformed1,
+        })
+    }
+
+    fn build_debug_stages(
+        &self,
+        image0: &Tensor,
+        image1: &Tensor,
+        backbone_features: &BackboneFeatures,
+        coarse_features: &CoarseFeatures,
+        coarse: &CoarseMatchingOutput,
+    ) -> LoftrDebugStages {
+        LoftrDebugStages {
+            image0: tensor_debug_stats(image0),
+            image1: tensor_debug_stats(image1),
+            feat_c0_backbone: tensor_debug_stats(&backbone_features.coarse0),
+            feat_c1_backbone: tensor_debug_stats(&backbone_features.coarse1),
+            feat_f0_backbone: tensor_debug_stats(&backbone_features.fine0),
+            feat_f1_backbone: tensor_debug_stats(&backbone_features.fine1),
+            feat_c0_pos: tensor_debug_stats(&coarse_features.positional0),
+            feat_c1_pos: tensor_debug_stats(&coarse_features.positional1),
+            feat_c0_coarse: tensor_debug_stats(&coarse_features.transformed0),
+            feat_c1_coarse: tensor_debug_stats(&coarse_features.transformed1),
+            coarse: CoarseDebugStats {
+                conf_matrix: tensor_debug_stats(&coarse.conf_matrix),
+                threshold_count: coarse
+                    .conf_matrix
+                    .gt(self.config.match_coarse.thr)
+                    .sum(Kind::Int64)
+                    .int64_value(&[]),
+                mutual_count: confidence_mutual_count(&coarse.conf_matrix),
+                match_count: coarse.mconf.size()[0],
+                confidence_mean: mean_or_zero(&coarse.mconf),
+                confidence_max: max_or_zero(&coarse.mconf),
+            },
+        }
     }
 }
 
@@ -272,6 +356,25 @@ impl LoFTRModel {
 struct ForwardWithDebug {
     matches: LoftrMatches,
     debug: LoftrDebugStages,
+}
+
+#[derive(Debug)]
+struct BackboneFeatures {
+    coarse0: Tensor,
+    coarse1: Tensor,
+    fine0: Tensor,
+    fine1: Tensor,
+}
+
+#[derive(Debug)]
+struct CoarseFeatures {
+    hw0_c: (i64, i64),
+    hw1_c: (i64, i64),
+    hw0_f: (i64, i64),
+    positional0: Tensor,
+    positional1: Tensor,
+    transformed0: Tensor,
+    transformed1: Tensor,
 }
 
 fn tensor_debug_stats(tensor: &Tensor) -> TensorDebugStats {
@@ -283,7 +386,7 @@ fn tensor_debug_stats(tensor: &Tensor) -> TensorDebugStats {
     };
     let flat = tensor.reshape([-1]).to_kind(Kind::Float);
     let sample_len = flat.size()[0].min(8);
-    let mut sample = Vec::with_capacity(sample_len as usize);
+    let mut sample = Vec::new();
     for index in 0..sample_len {
         sample.push(flat.double_value(&[index]));
     }
@@ -328,7 +431,6 @@ fn max_or_zero(tensor: &Tensor) -> f64 {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
     use std::{env, fs, path::Path};
@@ -337,8 +439,8 @@ mod tests {
     use tch::Tensor;
 
     #[test]
-    fn model_variable_names_match_kornia_prefixes() {
-        let model = LoFTRModel::new(Device::Cpu, LoftrConfig::outdoor()).expect("model");
+    fn model_variable_names_match_kornia_prefixes() -> Result<(), LoftrError> {
+        let model = LoFTRModel::new(Device::Cpu, LoftrConfig::outdoor())?;
         let vars = model.var_store().variables();
         for name in [
             "backbone.conv1.weight",
@@ -349,14 +451,15 @@ mod tests {
         ] {
             assert!(vars.contains_key(name), "missing variable `{name}`");
         }
+        Ok(())
     }
 
     #[test]
-    fn model_forward_smoke_returns_consistent_output_shapes() {
-        let mut model = LoFTRModel::new(Device::Cpu, LoftrConfig::outdoor()).expect("model");
+    fn model_forward_smoke_returns_consistent_output_shapes() -> Result<(), LoftrError> {
+        let mut model = LoFTRModel::new(Device::Cpu, LoftrConfig::outdoor())?;
         let image0 = Tensor::rand([1, 1, 128, 128], (Kind::Float, Device::Cpu));
         let image1 = Tensor::rand([1, 1, 128, 128], (Kind::Float, Device::Cpu));
-        let out = model.forward(&image0, &image1).expect("forward");
+        let out = model.forward(&image0, &image1)?;
         assert_eq!(out.keypoints0.size().len(), 2);
         assert_eq!(out.keypoints1.size().len(), 2);
         assert_eq!(out.confidence.size().len(), 1);
@@ -366,62 +469,70 @@ mod tests {
         assert_eq!(out.keypoints0.size()[0], out.batch_indexes.size()[0]);
         assert_eq!(out.keypoints0.size()[1], 2);
         assert_eq!(out.keypoints1.size()[1], 2);
+        Ok(())
     }
 
     #[test]
     #[ignore = "requires local weights and image paths via environment variables"]
-    fn exported_weights_match_local_pair() {
-        let weights = env::var("LOFTR_TEST_WEIGHTS").expect("LOFTR_TEST_WEIGHTS");
-        let left = env::var("LOFTR_TEST_LEFT").expect("LOFTR_TEST_LEFT");
-        let right = env::var("LOFTR_TEST_RIGHT").expect("LOFTR_TEST_RIGHT");
+    fn exported_weights_match_local_pair() -> Result<(), Box<dyn std::error::Error>> {
+        let weights = required_env_var("LOFTR_TEST_WEIGHTS")?;
+        let left = required_env_var("LOFTR_TEST_LEFT")?;
+        let right = required_env_var("LOFTR_TEST_RIGHT")?;
 
-        let mut model = LoFTRModel::new(Device::Cpu, LoftrConfig::outdoor()).expect("model");
-        model
-            .load_weights(Path::new(&weights))
-            .expect("load weights");
+        let mut model = LoFTRModel::new(Device::Cpu, LoftrConfig::outdoor())?;
+        model.load_weights(Path::new(&weights))?;
 
-        let image0 = load_local_grayscale(Path::new(&left));
-        let image1 = load_local_grayscale(Path::new(&right));
-        let out = model.forward(&image0, &image1).expect("forward");
+        let image0 = load_local_grayscale(Path::new(&left))?;
+        let image1 = load_local_grayscale(Path::new(&right))?;
+        let out = model.forward(&image0, &image1)?;
         assert_eq!(out.keypoints0.size()[1], 2);
         assert_eq!(out.keypoints1.size()[1], 2);
         assert_eq!(out.confidence.size()[0], out.keypoints0.size()[0]);
+        Ok(())
     }
 
     #[test]
     #[ignore = "writes Rust LoFTR stage stats for Python comparison"]
-    fn dump_local_stage_stats() {
-        let weights = env::var("LOFTR_TEST_WEIGHTS").expect("LOFTR_TEST_WEIGHTS");
-        let left = env::var("LOFTR_TEST_LEFT").expect("LOFTR_TEST_LEFT");
-        let right = env::var("LOFTR_TEST_RIGHT").expect("LOFTR_TEST_RIGHT");
-        let output = env::var("LOFTR_STAGE_DUMP")
-            .unwrap_or_else(|_| String::from("target/loftr_stage_stats_rust.json"));
+    fn dump_local_stage_stats() -> Result<(), Box<dyn std::error::Error>> {
+        let weights = required_env_var("LOFTR_TEST_WEIGHTS")?;
+        let left = required_env_var("LOFTR_TEST_LEFT")?;
+        let right = required_env_var("LOFTR_TEST_RIGHT")?;
+        let output = match env::var("LOFTR_STAGE_DUMP") {
+            Ok(output) => output,
+            Err(_) => String::from("target/loftr_stage_stats_rust.json"),
+        };
 
-        let mut model = LoFTRModel::new(Device::Cpu, LoftrConfig::outdoor()).expect("model");
-        model.load_weights(&weights).expect("load weights");
+        let mut model = LoFTRModel::new(Device::Cpu, LoftrConfig::outdoor())?;
+        model.load_weights(&weights)?;
 
-        let image0 = load_local_grayscale(Path::new(&left));
-        let image1 = load_local_grayscale(Path::new(&right));
-        let debug = model
-            .forward_debug(&image0, &image1)
-            .expect("debug forward");
-        fs::write(&output, serde_json::to_vec_pretty(&debug).expect("json")).expect("write json");
-        eprintln!("wrote {:?}", output);
+        let image0 = load_local_grayscale(Path::new(&left))?;
+        let image1 = load_local_grayscale(Path::new(&right))?;
+        let debug = model.forward_debug(&image0, &image1)?;
+        fs::write(&output, serde_json::to_vec_pretty(&debug)?)?;
+        eprintln!("wrote {output:?}");
+        Ok(())
     }
 
-    fn load_local_grayscale(path: &Path) -> Tensor {
-        let image = image::open(path).expect("load image");
-        let image = resize_for_loftr(image).to_luma32f();
+    fn required_env_var(name: &str) -> Result<String, Box<dyn std::error::Error>> {
+        match env::var(name) {
+            Ok(value) => Ok(value),
+            Err(_) => Err(format!("missing environment variable {name}").into()),
+        }
+    }
+
+    fn load_local_grayscale(path: &Path) -> Result<Tensor, image::ImageError> {
+        let image = image::open(path)?;
+        let image = resize_for_loftr(&image).to_luma32f();
         let height = i64::from(image.height());
         let width = i64::from(image.width());
         let data = image.into_raw();
-        Tensor::from_slice(&data)
+        Ok(Tensor::from_slice(&data)
             .view([1, height, width])
             .unsqueeze(0)
-            .to_kind(Kind::Float)
+            .to_kind(Kind::Float))
     }
 
-    fn resize_for_loftr(image: DynamicImage) -> DynamicImage {
+    fn resize_for_loftr(image: &DynamicImage) -> DynamicImage {
         image.resize_exact(960, 540, FilterType::Triangle)
     }
 }

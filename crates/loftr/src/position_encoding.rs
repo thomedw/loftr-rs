@@ -1,6 +1,6 @@
 use tch::{Device, Kind, Tensor};
 
-use crate::error::LoftrError;
+use crate::{error::LoftrError, numeric::i64_to_f64};
 
 #[derive(Debug)]
 pub struct PositionEncodingSine {
@@ -42,8 +42,7 @@ impl PositionEncodingSine {
         let dims = x.size();
         if dims.len() != 4 {
             return Err(LoftrError::InvalidInput(format!(
-                "PositionEncodingSine expects [N,C,H,W]; got {:?}",
-                dims
+                "PositionEncodingSine expects [N,C,H,W]; got {dims:?}"
             )));
         }
         if dims[1] != self.d_model {
@@ -76,8 +75,7 @@ fn create_position_encoding(
     }
     if max_shape.0 <= 0 || max_shape.1 <= 0 {
         return Err(LoftrError::InvalidConfig(format!(
-            "PositionEncodingSine requires positive max_shape; got {:?}",
-            max_shape
+            "PositionEncodingSine requires positive max_shape; got {max_shape:?}"
         )));
     }
 
@@ -90,9 +88,9 @@ fn create_position_encoding(
         .cumsum(1, Kind::Float)
         .unsqueeze(0);
     let div_base = if temp_bug_fix {
-        -(10000.0_f64.ln()) / ((d_model / 2) as f64)
+        -(10000.0_f64.ln()) / i64_to_f64(d_model / 2, "position encoding half d_model")?
     } else {
-        (-(10000.0_f64.ln()) / (d_model as f64) / 2.0).floor()
+        (-(10000.0_f64.ln()) / i64_to_f64(d_model, "position encoding d_model")? / 2.0).floor()
     };
     let div_term = (Tensor::arange_start_step(0, d_model / 2, 2, options) * div_base)
         .exp()
@@ -111,41 +109,46 @@ fn create_position_encoding(
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
 
     #[test]
-    fn create_position_encoding_has_expected_shape() {
-        let pe = create_position_encoding(256, (32, 48), false, Device::Cpu).expect("pe");
+    fn create_position_encoding_has_expected_shape() -> Result<(), LoftrError> {
+        let pe = create_position_encoding(256, (32, 48), false, Device::Cpu)?;
         assert_eq!(pe.size(), vec![1, 256, 32, 48]);
+        Ok(())
     }
 
     #[test]
-    fn forward_expands_internal_encoding_when_input_is_larger() {
-        let mut module =
-            PositionEncodingSine::new(256, (8, 8), false, Device::Cpu).expect("module");
+    fn forward_expands_internal_encoding_when_input_is_larger() -> Result<(), LoftrError> {
+        let mut module = PositionEncodingSine::new(256, (8, 8), false, Device::Cpu)?;
         let input = Tensor::zeros([1, 256, 16, 12], (Kind::Float, Device::Cpu));
-        let out = module.forward(&input).expect("forward");
+        let out = module.forward(&input)?;
         assert_eq!(out.size(), vec![1, 256, 16, 12]);
         assert!(module.pe().size()[2] >= 16);
         assert!(module.pe().size()[3] >= 12);
+        Ok(())
     }
 
     #[test]
-    fn temp_bug_fix_changes_encoding_values() {
-        let fixed = create_position_encoding(256, (4, 4), true, Device::Cpu).expect("fixed");
-        let legacy = create_position_encoding(256, (4, 4), false, Device::Cpu).expect("legacy");
+    fn temp_bug_fix_changes_encoding_values() -> Result<(), LoftrError> {
+        let fixed = create_position_encoding(256, (4, 4), true, Device::Cpu)?;
+        let legacy = create_position_encoding(256, (4, 4), false, Device::Cpu)?;
         let diff = (&fixed - &legacy).abs().sum(Kind::Float).double_value(&[]);
         assert!(diff > 0.0);
+        Ok(())
     }
 
     #[test]
     fn forward_rejects_wrong_channel_count() {
-        let mut module =
-            PositionEncodingSine::new(256, (8, 8), false, Device::Cpu).expect("module");
+        let mut module = match PositionEncodingSine::new(256, (8, 8), false, Device::Cpu) {
+            Ok(module) => module,
+            Err(err) => panic!("module construction failed unexpectedly: {err}"),
+        };
         let input = Tensor::zeros([1, 128, 8, 8], (Kind::Float, Device::Cpu));
-        let err = module.forward(&input).expect_err("channel mismatch");
-        assert!(format!("{err}").contains("d_model mismatch"));
+        match module.forward(&input) {
+            Ok(_) => panic!("channel mismatch should fail"),
+            Err(err) => assert!(format!("{err}").contains("d_model mismatch")),
+        }
     }
 }

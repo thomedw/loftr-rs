@@ -2,6 +2,7 @@ use std::{cmp::Ordering, env, error::Error, fs, path::Path};
 
 use image::{DynamicImage, GrayImage, Rgb, RgbImage, imageops::FilterType};
 use loftr::{LoftrConfig, LoftrMatches, LoftrModel};
+use num_traits::ToPrimitive;
 use tch::{Device, Kind, Tensor};
 
 const DEMO_WIDTH: u32 = 376;
@@ -73,7 +74,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 fn load_grayscale(path: &Path) -> Result<(Tensor, GrayImage), Box<dyn Error>> {
     let image = image::open(path)?;
-    let image = resize_for_loftr(image);
+    let image = resize_for_loftr(&image);
 
     let preview = image.to_luma8();
     let image = image.to_luma32f();
@@ -87,7 +88,7 @@ fn load_grayscale(path: &Path) -> Result<(Tensor, GrayImage), Box<dyn Error>> {
     Ok((tensor, preview))
 }
 
-fn resize_for_loftr(image: DynamicImage) -> DynamicImage {
+fn resize_for_loftr(image: &DynamicImage) -> DynamicImage {
     // Kornia's tutorial uses a 600x375 (H x W) resize for this pair.
     // The current native port needs even spatial dimensions for fine matching,
     // so the demo rounds the width up by one pixel.
@@ -114,12 +115,12 @@ fn select_matches(
         })
         .collect::<Vec<_>>();
 
-    candidates.sort_by(|left, right| {
-        right
-            .confidence
-            .partial_cmp(&left.confidence)
-            .unwrap_or(Ordering::Equal)
-    });
+    candidates.sort_by(
+        |left, right| match right.confidence.partial_cmp(&left.confidence) {
+            Some(ordering) => ordering,
+            None => Ordering::Equal,
+        },
+    );
 
     let total = candidates.len();
     let end = top_k.min(total);
@@ -183,26 +184,26 @@ fn render_demo(
         };
         let color = jet_color(normalized);
         let start = (
-            left_origin.0 as f32 + matched.start.0,
-            left_origin.1 as f32 + matched.start.1,
+            f64::from(left_origin.0) + f64::from(matched.start.0),
+            f64::from(left_origin.1) + f64::from(matched.start.1),
         );
         let end = (
-            right_origin.0 as f32 + matched.end.0,
-            right_origin.1 as f32 + matched.end.1,
+            f64::from(right_origin.0) + f64::from(matched.end.0),
+            f64::from(right_origin.1) + f64::from(matched.end.1),
         );
-        draw_line(&mut canvas, start, end, color, 0.8);
+        draw_line(&mut canvas, start, end, color, 0.8)?;
         draw_disc(
             &mut canvas,
-            start.0.round() as i32,
-            start.1.round() as i32,
+            round_to_i32(start.0)?,
+            round_to_i32(start.1)?,
             2,
             color,
             1.0,
         );
         draw_disc(
             &mut canvas,
-            end.0.round() as i32,
-            end.1.round() as i32,
+            round_to_i32(end.0)?,
+            round_to_i32(end.1)?,
             2,
             color,
             1.0,
@@ -235,33 +236,34 @@ fn blit_grayscale(canvas: &mut RgbImage, image: &GrayImage, origin: (u32, u32)) 
 }
 
 fn jet_color(value: f32) -> Rgb<u8> {
-    let x = value.clamp(0.0, 1.0);
+    let x = f64::from(value.clamp(0.0, 1.0));
     let red = (1.5 - (4.0 * x - 3.0).abs()).clamp(0.0, 1.0);
     let green = (1.5 - (4.0 * x - 2.0).abs()).clamp(0.0, 1.0);
     let blue = (1.5 - (4.0 * x - 1.0).abs()).clamp(0.0, 1.0);
     Rgb([
-        (red * 255.0).round() as u8,
-        (green * 255.0).round() as u8,
-        (blue * 255.0).round() as u8,
+        round_to_u8(red * 255.0),
+        round_to_u8(green * 255.0),
+        round_to_u8(blue * 255.0),
     ])
 }
 
 fn draw_line(
     canvas: &mut RgbImage,
-    start: (f32, f32),
-    end: (f32, f32),
+    start: (f64, f64),
+    end: (f64, f64),
     color: Rgb<u8>,
     alpha: f32,
-) {
+) -> Result<(), Box<dyn Error>> {
     let dx = end.0 - start.0;
     let dy = end.1 - start.1;
-    let steps = dx.abs().max(dy.abs()).max(1.0).ceil() as i32;
+    let steps = ceil_to_i32(dx.abs().max(dy.abs()).max(1.0))?;
     for step in 0..=steps {
-        let t = step as f32 / steps as f32;
+        let t = f64::from(step) / f64::from(steps);
         let x = start.0 + dx * t;
         let y = start.1 + dy * t;
-        draw_disc(canvas, x.round() as i32, y.round() as i32, 1, color, alpha);
+        draw_disc(canvas, round_to_i32(x)?, round_to_i32(y)?, 1, color, alpha);
     }
+    Ok(())
 }
 
 fn draw_disc(
@@ -292,8 +294,12 @@ fn blend_pixel(canvas: &mut RgbImage, x: i32, y: i32, color: Rgb<u8>, alpha: f32
     if x < 0 || y < 0 {
         return;
     }
-    let x = x as u32;
-    let y = y as u32;
+    let Ok(x) = u32::try_from(x) else {
+        return;
+    };
+    let Ok(y) = u32::try_from(y) else {
+        return;
+    };
     if x >= canvas.width() || y >= canvas.height() {
         return;
     }
@@ -302,8 +308,27 @@ fn blend_pixel(canvas: &mut RgbImage, x: i32, y: i32, color: Rgb<u8>, alpha: f32
     let src_alpha = alpha.clamp(0.0, 1.0);
     let dst_alpha = 1.0 - src_alpha;
     for channel in 0..3 {
-        destination[channel] = (destination[channel] as f32 * dst_alpha
-            + color[channel] as f32 * src_alpha)
-            .round() as u8;
+        let blended =
+            f32::from(destination[channel]) * dst_alpha + f32::from(color[channel]) * src_alpha;
+        destination[channel] = round_to_u8(f64::from(blended));
     }
+}
+
+fn round_to_i32(value: f64) -> Result<i32, Box<dyn Error>> {
+    value
+        .round()
+        .to_i32()
+        .ok_or_else(|| format!("value out of i32 range after rounding: {value}").into())
+}
+
+fn ceil_to_i32(value: f64) -> Result<i32, Box<dyn Error>> {
+    value
+        .ceil()
+        .to_i32()
+        .ok_or_else(|| format!("value out of i32 range after ceiling: {value}").into())
+}
+
+fn round_to_u8(value: f64) -> u8 {
+    let clamped = value.clamp(0.0, f64::from(u8::MAX));
+    clamped.round().to_u8().unwrap_or(u8::MAX)
 }
