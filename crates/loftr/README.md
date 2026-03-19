@@ -13,6 +13,15 @@ validate results carefully before relying on it in production workflows.
 - pairwise feature matching
 - optional debug-stage dumps for validation
 
+## Public API
+
+- `LoftrConfig` for preset and custom model configuration
+- `LoftrModel` for model construction, weight loading, and inference
+- `LoftrMatches` for match outputs
+- `LoftrDebugStages` for validation-oriented stage summaries
+- `normalize_loftr_image` for converting supported image layouts into LoFTR input tensors
+- `LoftrError` for public error handling
+
 ## Upstream References
 
 - [LoFTR upstream](https://github.com/zju3dv/LoFTR)
@@ -37,7 +46,7 @@ artifacts/weights/loftr_outdoor_state_dict.safetensors
 
 ## Example
 
-```rust
+```rust,no_run
 use loftr::{LoftrConfig, LoftrModel};
 use tch::{Device, Kind, Tensor};
 
@@ -51,3 +60,8 @@ let matches = model.forward(&image0, &image1)?;
 println!("match count = {}", matches.confidence.size()[0]);
 # Ok::<(), loftr::LoftrError>(())
 ```
+
+## Docs.rs
+
+The published API docs are built with the `doc-only` feature so docs.rs can
+render the crate without linking libtorch.
