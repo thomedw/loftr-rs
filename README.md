@@ -18,14 +18,17 @@ Rust workspace for a native [`tch`](https://crates.io/crates/tch)-based implemen
 The left image is the original Kornia LoFTR application demo from the
 [Image Matching docs](https://kornia.readthedocs.io/en/latest/applications/image_matching.html).
 The right image is generated locally with the Rust visualizer example in this repo, using the same
-Kornia homography fixture inputs and a local LoFTR weight export:
+`kn_church-2.jpg` and `kn_church-8.jpg` pair that Kornia uses in its LoFTR tutorial. Kornia resizes
+that pair to `600x375` (`H x W`); the current native port rounds the width up to `376` to keep the
+fine-matching scale integral:
 
 ```bash
-python3 scripts/export_fixture_images.py /path/to/loftr_homo.pt /tmp/loftr-demo-inputs --prefix readme-demo
+curl -L -o /tmp/kn_church-2.jpg https://github.com/kornia/data/raw/main/matching/kn_church-2.jpg
+curl -L -o /tmp/kn_church-8.jpg https://github.com/kornia/data/raw/main/matching/kn_church-8.jpg
 cargo run -p loftr --example render_demo --features download-libtorch -- \
   /path/to/loftr_outdoor_state_dict.safetensors \
-  /tmp/loftr-demo-inputs/readme-demo-image0.png \
-  /tmp/loftr-demo-inputs/readme-demo-image1.png \
+  /tmp/kn_church-2.jpg \
+  /tmp/kn_church-8.jpg \
   docs/images/loftr-rs-demo-rust.png \
   64
 ```

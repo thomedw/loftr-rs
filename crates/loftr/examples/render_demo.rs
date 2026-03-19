@@ -4,6 +4,9 @@ use image::{DynamicImage, GrayImage, Rgb, RgbImage, imageops::FilterType};
 use loftr::{LoftrConfig, LoftrMatches, LoftrModel};
 use tch::{Device, Kind, Tensor};
 
+const DEMO_WIDTH: u32 = 376;
+const DEMO_HEIGHT: u32 = 600;
+
 #[derive(Clone, Debug)]
 struct MatchViz {
     start: (f32, f32),
@@ -66,7 +69,10 @@ fn load_grayscale(path: &Path) -> Result<(Tensor, GrayImage), Box<dyn Error>> {
 }
 
 fn resize_for_loftr(image: DynamicImage) -> DynamicImage {
-    image.resize_exact(960, 540, FilterType::Triangle)
+    // Kornia's tutorial uses a 600x375 (H x W) resize for this pair.
+    // The current native port needs even spatial dimensions for fine matching,
+    // so the demo rounds the width up by one pixel.
+    image.resize_exact(DEMO_WIDTH, DEMO_HEIGHT, FilterType::Triangle)
 }
 
 fn select_matches(
