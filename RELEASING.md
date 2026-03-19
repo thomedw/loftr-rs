@@ -13,14 +13,15 @@
    - `just test`
    - `just publish-dry-run`
 3. Confirm weights are not staged.
-4. Run the GitHub `Prepare Release PR` workflow from `main`.
-5. Review the generated PR:
+4. The repo does not track `Cargo.lock`; local commands may generate it, but git ignores it.
+5. Run the GitHub `Prepare Release PR` workflow from `main`.
+6. Review the generated PR:
    - version bump in `Cargo.toml`
    - regenerated `CHANGELOG.md`
    - release notes in the PR body
-6. If additional commits land on `main`, rerun `Prepare Release PR` before merge so the release PR stays current.
-7. Merge the release PR into `main`.
-8. The `Publish Release` workflow will then:
+7. If additional commits land on `main`, rerun `Prepare Release PR` before merge so the release PR stays current.
+8. Merge the release PR into `main`.
+9. The `Publish Release` workflow will then:
    - authenticate to crates.io via Trusted Publishing
    - publish `loftr`
    - create and push the annotated git tag `v<version>`

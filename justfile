@@ -19,15 +19,15 @@ test:
 coverage:
     ./scripts/prepare_test_fixtures.sh
     cargo llvm-cov clean --workspace
-    cargo llvm-cov --workspace --features download-libtorch --locked --fail-under-lines 80
+    cargo llvm-cov --workspace --features download-libtorch --fail-under-lines 80
 
 coverage-html:
     ./scripts/prepare_test_fixtures.sh
     cargo llvm-cov clean --workspace
-    cargo llvm-cov --workspace --features download-libtorch --locked --html --output-dir target/llvm-cov/html --fail-under-lines 80
+    cargo llvm-cov --workspace --features download-libtorch --html --output-dir target/llvm-cov/html --fail-under-lines 80
 
 publish-dry-run:
-    cargo publish --dry-run -p loftr --locked --features download-libtorch
+    cargo publish --dry-run -p loftr --features download-libtorch
 
 release-notes version:
     mkdir -p target/release

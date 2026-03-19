@@ -85,7 +85,7 @@ jobs:
           mkdir -p target/llvm-cov
           set +e
           cargo llvm-cov clean --workspace
-          cargo llvm-cov --workspace --features download-libtorch --locked --fail-under-lines 80 \
+          cargo llvm-cov --workspace --features download-libtorch --fail-under-lines 80 \
             | tee target/llvm-cov/summary.txt
           status=${PIPESTATUS[0]}
           cargo llvm-cov report --json --summary-only --output-path target/llvm-cov/coverage.json || true
