@@ -7,6 +7,7 @@ jobs:
   prepare:
     runs-on: ubuntu-latest
     permissions:
+      actions: write
       contents: write
       issues: write
       pull-requests: write
@@ -30,31 +31,248 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Derive next release metadata
-        id: meta
+      - name: Discover release state
+        id: state
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          git fetch --force origin main --tags
+
+          start_main_sha="$(git rev-parse origin/main)"
+          current_version="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys; data = json.load(sys.stdin); pkg = next(p for p in data["packages"] if p["name"] == "loftr"); print(pkg["version"])')"
           latest_tag="$(git tag --list 'v[0-9]*' --sort=-version:refname | head -n1)"
           if [ -z "${latest_tag}" ]; then
             echo "no existing release tag found; bootstrap the first release manually before using this workflow" >&2
             exit 1
           fi
 
+          mkdir -p target
+          python3 - <<'PY'
+          import re
+          import subprocess
+          from pathlib import Path
+
+          pattern = re.compile(r"^chore\(release\): prepare (v\d+\.\d+\.\d+)(?: \(#\d+\))?$")
+          log_output = subprocess.check_output(
+              ["git", "log", "--reverse", "--format=%H%x1f%s", "origin/main"],
+              encoding="utf-8",
+          )
+
+          rows = []
+          for line in log_output.splitlines():
+              sha, subject = line.split("\x1f", 1)
+              match = pattern.match(subject)
+              if match is None:
+                  continue
+              tag = match.group(1)
+              rows.append(f"{tag.removeprefix('v')}\t{tag}\t{sha}\t{subject}")
+
+          content = "\n".join(rows)
+          if content:
+              content += "\n"
+          Path("target/prepared-releases.tsv").write_text(content, encoding="utf-8")
+          PY
+
+          : > target/recovery-queue.tsv
+          prepared_current=false
+          queue_count=0
+          latest_complete_tag="${latest_tag}"
+
+          while IFS=$'\t' read -r version tag commit subject; do
+            [ -n "${version:-}" ] || continue
+
+            if [ "${version}" = "${current_version}" ]; then
+              prepared_current=true
+            fi
+
+            crate_published=false
+            if curl -fsS "https://crates.io/api/v1/crates/loftr/${version}" >/dev/null 2>&1; then
+              crate_published=true
+            fi
+
+            github_release_exists=false
+            if gh release view "${tag}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+              github_release_exists=true
+            fi
+
+            tag_exists=false
+            tag_target=""
+            if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+              tag_exists=true
+              tag_target="$(git rev-list -n1 "${tag}")"
+            fi
+
+            complete=false
+            if [ "${crate_published}" = true ] && [ "${github_release_exists}" = true ] && [ "${tag_exists}" = true ] && [ "${tag_target}" = "${commit}" ]; then
+              complete=true
+              latest_complete_tag="${tag}"
+            else
+              queue_count="$((queue_count + 1))"
+              printf '%s\t%s\t%s\n' "${version}" "${tag}" "${commit}" >> target/recovery-queue.tsv
+            fi
+
+            printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+              "${version}" \
+              "${tag}" \
+              "${commit}" \
+              "${crate_published}" \
+              "${tag_exists}" \
+              "${github_release_exists}" \
+              "${complete}" \
+              >> target/release-state.tsv
+          done < target/prepared-releases.tsv
+
+          if [ "${current_version}" != "${latest_tag#v}" ] && [ "${prepared_current}" != true ]; then
+            echo "current version ${current_version} is ahead of latest tag ${latest_tag} but has no automated release-prep commit on main" >&2
+            exit 1
+          fi
+
+          {
+            echo "current_version=${current_version}"
+            echo "latest_complete_tag=${latest_complete_tag}"
+            echo "prepared_current=${prepared_current}"
+            echo "queue_count=${queue_count}"
+            echo "recovery_needed=$([ "${queue_count}" -gt 0 ] && echo true || echo false)"
+            echo "start_main_sha=${start_main_sha}"
+          } >> "${GITHUB_OUTPUT}"
+
+          {
+            echo "## Release state"
+            echo
+            echo "- Current workspace version: \`${current_version}\`"
+            echo "- Latest completed tag at start: \`${latest_complete_tag}\`"
+            echo "- Missing prepared releases detected: \`${queue_count}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Recover missing prepared releases
+        if: ${{ steps.state.outputs.recovery_needed == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          while IFS=$'\t' read -r version tag commit; do
+            [ -n "${version:-}" ] || continue
+
+            started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            expected_title="Publish Release Recovery ${tag}"
+
+            gh api "repos/${REPOSITORY}/actions/workflows/publish.yml/dispatches" \
+              --method POST \
+              -f ref=main \
+              -f "inputs[expected_version]=${version}" \
+              -f "inputs[source_ref]=${commit}" \
+              -f "inputs[caller_run_id]=${GITHUB_RUN_ID}"
+
+            run_id=""
+            for attempt in $(seq 1 30); do
+              gh api "repos/${REPOSITORY}/actions/workflows/publish.yml/runs?event=workflow_dispatch&per_page=20" \
+                > target/publish-runs.json
+
+              run_id="$(
+                STARTED_AT="${started_at}" EXPECTED_TITLE="${expected_title}" python3 - <<'PY'
+                import json
+                import os
+                from datetime import datetime
+                from pathlib import Path
+
+                started_at = datetime.fromisoformat(os.environ["STARTED_AT"].replace("Z", "+00:00"))
+                expected_title = os.environ["EXPECTED_TITLE"]
+                runs = json.loads(Path("target/publish-runs.json").read_text(encoding="utf-8"))["workflow_runs"]
+                candidates = [
+                    run
+                    for run in runs
+                    if datetime.fromisoformat(run["created_at"].replace("Z", "+00:00")) >= started_at
+                    and run.get("display_title") == expected_title
+                ]
+                candidates.sort(key=lambda run: run["created_at"])
+                if candidates:
+                    print(candidates[-1]["id"])
+                PY
+              )"
+
+              if [ -n "${run_id}" ]; then
+                break
+              fi
+
+              sleep 10
+            done
+
+            if [ -z "${run_id}" ]; then
+              echo "failed to locate recovery publish run for ${tag}" >&2
+              exit 1
+            fi
+
+            gh run watch "${run_id}" --repo "${REPOSITORY}" --interval 10 --exit-status
+            run_url="$(gh run view "${run_id}" --repo "${REPOSITORY}" --json url --jq '.url')"
+
+            {
+              echo "## Recovered ${tag}"
+              echo
+              echo "- Source commit: \`${commit}\`"
+              echo "- Publish run: ${run_url}"
+            } >> "${GITHUB_STEP_SUMMARY}"
+          done < target/recovery-queue.tsv
+
+      - name: Refresh after recovery
+        if: ${{ steps.state.outputs.recovery_needed == 'true' }}
+        id: refresh
+        run: |
+          set -euo pipefail
+          git fetch --force origin main --tags
+          current_main_sha="$(git rev-parse origin/main)"
+          echo "current_main_sha=${current_main_sha}" >> "${GITHUB_OUTPUT}"
+
+          if [ "${current_main_sha}" != "${{ steps.state.outputs.start_main_sha }}" ]; then
+            echo "continue=false" >> "${GITHUB_OUTPUT}"
+            {
+              echo "## Recovery completed"
+              echo
+              echo "- Prior release recovery succeeded."
+              echo "- \`main\` moved from \`${{ steps.state.outputs.start_main_sha }}\` to \`${current_main_sha}\` while recovery was running."
+              echo "- Rerun \`Prepare Release PR\` on the newer \`main\`."
+            } >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
+          echo "continue=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Derive next release metadata
+        if: ${{ steps.state.outputs.recovery_needed != 'true' || steps.refresh.outputs.continue == 'true' }}
+        id: meta
+        run: |
+          set -euo pipefail
+          git fetch --force origin main --tags
+
+          latest_tag="$(git tag --list 'v[0-9]*' --sort=-version:refname | head -n1)"
+          if [ -z "${latest_tag}" ]; then
+            echo "no release tag exists after recovery" >&2
+            exit 1
+          fi
+
           current_version="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys; data = json.load(sys.stdin); pkg = next(p for p in data["packages"] if p["name"] == "loftr"); print(pkg["version"])')"
           latest_version="${latest_tag#v}"
           if [ "${current_version}" != "${latest_version}" ]; then
-            echo "workspace version ${current_version} does not match latest release tag ${latest_tag}; finish that release before preparing another one" >&2
+            echo "workspace version ${current_version} does not match latest completed tag ${latest_tag} after recovery" >&2
             exit 1
           fi
 
-          commit_count="$(git rev-list --count --no-merges "${latest_tag}..HEAD")"
+          commit_count="$(git rev-list --count --no-merges "${latest_tag}..origin/main")"
           if [ "${commit_count}" = "0" ]; then
-            echo "no commits since ${latest_tag}; nothing to release" >&2
-            exit 1
+            echo "create_pr=false" >> "${GITHUB_OUTPUT}"
+            {
+              echo "## No new release needed"
+              echo
+              echo "- Latest completed release: \`${latest_tag}\`"
+              echo "- There are no commits on \`main\` after that release."
+            } >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
           fi
 
           mkdir -p target
-          git log --no-merges --format='%s%x1f%b%x1e' "${latest_tag}..HEAD" > target/release-commits.txt
+          git log --no-merges --format='%s%x1f%b%x1e' "${latest_tag}..origin/main" > target/release-commits.txt
 
           export CURRENT_VERSION="${current_version}"
           export COMMITS_FILE="target/release-commits.txt"
@@ -89,13 +307,17 @@ jobs:
           tag="v${next_version}"
           branch="release/${tag}"
           title="chore(release): prepare ${tag}"
-          echo "latest_tag=${latest_tag}" >> "${GITHUB_OUTPUT}"
-          echo "version=${next_version}" >> "${GITHUB_OUTPUT}"
-          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
-          echo "branch=${branch}" >> "${GITHUB_OUTPUT}"
-          echo "title=${title}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "create_pr=true"
+            echo "latest_tag=${latest_tag}"
+            echo "version=${next_version}"
+            echo "tag=${tag}"
+            echo "branch=${branch}"
+            echo "title=${title}"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Bump workspace version
+        if: ${{ steps.meta.outputs.create_pr == 'true' }}
         env:
           NEXT_VERSION: ${{ steps.meta.outputs.version }}
         run: |
@@ -127,6 +349,7 @@ jobs:
           PY
 
       - name: Generate release notes
+        if: ${{ steps.meta.outputs.create_pr == 'true' }}
         uses: orhun/git-cliff-action@v4
         with:
           config: cliff.toml
@@ -140,6 +363,7 @@ jobs:
           GITHUB_REPO: ${{ github.repository }}
 
       - name: Update changelog
+        if: ${{ steps.meta.outputs.create_pr == 'true' }}
         uses: orhun/git-cliff-action@v4
         with:
           config: cliff.toml
@@ -151,6 +375,7 @@ jobs:
           GITHUB_REPO: ${{ github.repository }}
 
       - name: Write pull request body
+        if: ${{ steps.meta.outputs.create_pr == 'true' }}
         env:
           LATEST_TAG: ${{ steps.meta.outputs.latest_tag }}
           TAG: ${{ steps.meta.outputs.tag }}
@@ -171,6 +396,7 @@ jobs:
           } > target/release-pr-body.md
 
       - name: Ensure release label exists
+        if: ${{ steps.meta.outputs.create_pr == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -183,6 +409,7 @@ jobs:
           fi
 
       - name: Create or update release PR
+        if: ${{ steps.meta.outputs.create_pr == 'true' }}
         uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ github.token }}

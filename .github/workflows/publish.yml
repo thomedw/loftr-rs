@@ -1,6 +1,27 @@
 name: Publish Release
 
+run-name: >-
+  ${{
+    github.event_name == 'workflow_dispatch' &&
+    format('Publish Release Recovery v{0}', inputs.expected_version) ||
+    'Publish Release'
+  }}
+
 on:
+  workflow_dispatch:
+    inputs:
+      expected_version:
+        description: Release version to publish or repair, without the leading v.
+        required: true
+        type: string
+      source_ref:
+        description: Commit SHA on main to publish from.
+        required: true
+        type: string
+      caller_run_id:
+        description: Prepare Release PR run id that dispatched this recovery.
+        required: false
+        type: string
   push:
     branches:
       - main
@@ -20,6 +41,12 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source_ref || github.sha }}
+
+      - name: Refresh tags and main branch
+        run: |
+          set -euo pipefail
+          git fetch --force origin main --tags
 
       - uses: dtolnay/rust-toolchain@master
         with:
@@ -28,6 +55,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Inspect merged pull request for this push
+        if: ${{ github.event_name == 'push' }}
         id: pr
         env:
           COMMIT_SHA: ${{ github.sha }}
@@ -96,10 +124,8 @@ jobs:
               "\n".join(
                   [
                       "release_pr=true",
-                      f"number={pr['number']}",
                       f"head_ref={head_ref}",
-                      f"head_sha={pr['head']['sha']}",
-                      f"tag={head_ref.removeprefix('release/')}",
+                      f"source_ref={os.environ['COMMIT_SHA']}",
                   ]
               )
               + "\n",
@@ -107,56 +133,116 @@ jobs:
           )
           summary_path.write_text(
               "## Release publish candidate\n\n"
-              f"- PR: #{pr['number']}\n"
               f"- Release branch: `{head_ref}`\n"
-              f"- Merge commit: `{os.environ['COMMIT_SHA']}`\n",
+              f"- Source commit: `{os.environ['COMMIT_SHA']}`\n",
               encoding="utf-8",
           )
           PY
 
+      - name: Validate recovery dispatch
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        id: recovery
+        env:
+          EXPECTED_VERSION: ${{ inputs.expected_version }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          set -euo pipefail
+          resolved_head="$(git rev-parse HEAD)"
+          if [ "${resolved_head}" != "${SOURCE_REF}" ]; then
+            echo "checked out ${resolved_head}, expected ${SOURCE_REF}" >&2
+            exit 1
+          fi
+
+          if ! git merge-base --is-ancestor "${SOURCE_REF}" origin/main; then
+            echo "recovery source ${SOURCE_REF} is not reachable from origin/main" >&2
+            exit 1
+          fi
+
+          {
+            echo "release_pr=true"
+            echo "head_ref=release/v${EXPECTED_VERSION}"
+            echo "source_ref=${SOURCE_REF}"
+          } >> "${GITHUB_OUTPUT}"
+
+          {
+            echo "## Release recovery candidate"
+            echo
+            echo "- Version: \`v${EXPECTED_VERSION}\`"
+            echo "- Source commit: \`${SOURCE_REF}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
       - name: Derive release metadata
-        if: ${{ steps.pr.outputs.release_pr == 'true' }}
+        if: ${{ github.event_name == 'workflow_dispatch' || steps.pr.outputs.release_pr == 'true' }}
         id: meta
         env:
-          HEAD_REF: ${{ steps.pr.outputs.head_ref }}
+          EXPECTED_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.expected_version || '' }}
+          HEAD_REF: ${{ github.event_name == 'workflow_dispatch' && steps.recovery.outputs.head_ref || steps.pr.outputs.head_ref }}
+          SOURCE_REF: ${{ github.event_name == 'workflow_dispatch' && steps.recovery.outputs.source_ref || steps.pr.outputs.source_ref }}
         run: |
           set -euo pipefail
           version="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys; data = json.load(sys.stdin); pkg = next(p for p in data["packages"] if p["name"] == "loftr"); print(pkg["version"])')"
+          if [ -n "${EXPECTED_VERSION}" ] && [ "${version}" != "${EXPECTED_VERSION}" ]; then
+            echo "checked out version ${version}, expected ${EXPECTED_VERSION}" >&2
+            exit 1
+          fi
+
           tag="v${version}"
           expected_branch="release/${tag}"
           if [ "${HEAD_REF}" != "${expected_branch}" ]; then
             echo "release branch ${HEAD_REF} does not match crate version ${version}; expected ${expected_branch}" >&2
             exit 1
           fi
-          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
-            echo "tag_exists=true" >> "${GITHUB_OUTPUT}"
-          else
-            echo "tag_exists=false" >> "${GITHUB_OUTPUT}"
+
+          tag_exists=false
+          tag_target=""
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            tag_exists=true
+            tag_target="$(git rev-list -n1 "${tag}")"
+            if [ "${tag_target}" != "${SOURCE_REF}" ]; then
+              echo "tag ${tag} already points at ${tag_target}, expected ${SOURCE_REF}" >&2
+              exit 1
+            fi
           fi
-          echo "version=${version}" >> "${GITHUB_OUTPUT}"
-          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
-          echo "title=loftr ${tag}" >> "${GITHUB_OUTPUT}"
+
+          {
+            echo "source_ref=${SOURCE_REF}"
+            echo "tag=${tag}"
+            echo "tag_exists=${tag_exists}"
+            echo "tag_target=${tag_target}"
+            echo "title=loftr ${tag}"
+            echo "version=${version}"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Check release state
-        if: ${{ steps.pr.outputs.release_pr == 'true' }}
+        if: ${{ github.event_name == 'workflow_dispatch' || steps.pr.outputs.release_pr == 'true' }}
         id: state
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          crate_published=false
           if curl -fsS "https://crates.io/api/v1/crates/loftr/${{ steps.meta.outputs.version }}" >/dev/null; then
-            echo "crate_published=true" >> "${GITHUB_OUTPUT}"
-          else
-            echo "crate_published=false" >> "${GITHUB_OUTPUT}"
-          fi
-          if gh release view "${{ steps.meta.outputs.tag }}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            echo "github_release_exists=true" >> "${GITHUB_OUTPUT}"
-          else
-            echo "github_release_exists=false" >> "${GITHUB_OUTPUT}"
+            crate_published=true
           fi
 
+          github_release_exists=false
+          if gh release view "${{ steps.meta.outputs.tag }}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            github_release_exists=true
+          fi
+
+          release_complete=false
+          if [ "${crate_published}" = true ] && [ "${github_release_exists}" = true ] && [ "${{ steps.meta.outputs.tag_exists }}" = true ]; then
+            release_complete=true
+          fi
+
+          {
+            echo "crate_published=${crate_published}"
+            echo "github_release_exists=${github_release_exists}"
+            echo "release_complete=${release_complete}"
+          } >> "${GITHUB_OUTPUT}"
+
       - name: Extract release notes from changelog
-        if: ${{ steps.pr.outputs.release_pr == 'true' }}
+        if: ${{ github.event_name == 'workflow_dispatch' || steps.pr.outputs.release_pr == 'true' }}
         env:
           TAG: ${{ steps.meta.outputs.tag }}
         run: |
@@ -184,7 +270,7 @@ jobs:
           PY
 
       - name: Add release notes to summary
-        if: ${{ steps.pr.outputs.release_pr == 'true' }}
+        if: ${{ github.event_name == 'workflow_dispatch' || steps.pr.outputs.release_pr == 'true' }}
         run: |
           {
             echo "## ${{ steps.meta.outputs.title }}"
@@ -193,26 +279,36 @@ jobs:
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Authenticate to crates.io via trusted publishing
-        if: ${{ steps.pr.outputs.release_pr == 'true' && steps.state.outputs.crate_published != 'true' }}
+        if: >-
+          (github.event_name == 'workflow_dispatch' || steps.pr.outputs.release_pr == 'true') &&
+          steps.state.outputs.crate_published != 'true'
         id: auth
         uses: rust-lang/crates-io-auth-action@v1
 
       - name: Publish crate
-        if: ${{ steps.pr.outputs.release_pr == 'true' && steps.state.outputs.crate_published != 'true' }}
+        if: >-
+          (github.event_name == 'workflow_dispatch' || steps.pr.outputs.release_pr == 'true') &&
+          steps.state.outputs.crate_published != 'true'
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: cargo publish -p loftr --features download-libtorch
 
       - name: Create annotated tag
-        if: ${{ steps.pr.outputs.release_pr == 'true' && steps.meta.outputs.tag_exists != 'true' }}
+        if: >-
+          (github.event_name == 'workflow_dispatch' || steps.pr.outputs.release_pr == 'true') &&
+          steps.meta.outputs.tag_exists != 'true'
         run: git tag -a "${{ steps.meta.outputs.tag }}" -m "Release ${{ steps.meta.outputs.tag }}"
 
       - name: Push release tag
-        if: ${{ steps.pr.outputs.release_pr == 'true' && steps.meta.outputs.tag_exists != 'true' }}
+        if: >-
+          (github.event_name == 'workflow_dispatch' || steps.pr.outputs.release_pr == 'true') &&
+          steps.meta.outputs.tag_exists != 'true'
         run: git push origin "${{ steps.meta.outputs.tag }}"
 
       - name: Create GitHub release
-        if: ${{ steps.pr.outputs.release_pr == 'true' && steps.state.outputs.github_release_exists != 'true' }}
+        if: >-
+          (github.event_name == 'workflow_dispatch' || steps.pr.outputs.release_pr == 'true') &&
+          steps.state.outputs.github_release_exists != 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
