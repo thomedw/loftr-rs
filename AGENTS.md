@@ -206,9 +206,10 @@ Rules:
 
 ### Release Workflow
 
-- The first crates.io release for a crate must be published manually before Trusted Publishing can be enabled
-- After that, the GitHub `Release` workflow is the intended publish path
-- The release workflow uses `git-cliff`, updates `CHANGELOG.md`, publishes the crate, pushes a tag, and creates a GitHub Release
+- Use the GitHub `Prepare Release PR` workflow from `main` to bump the version and regenerate `CHANGELOG.md`
+- Merge the generated `release/v*` pull request to trigger the GitHub `Publish Release` workflow automatically
+- The publish workflow must not push commits to `main`; it only publishes the crate, pushes the tag, and creates the GitHub Release
+- Configure crates.io Trusted Publishing for workflow file `publish.yml` and environment `release`
 - Do not reintroduce a long-lived `CRATES_IO_TOKEN` secret without a clear reason
 
 ---
