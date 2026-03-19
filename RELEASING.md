@@ -36,6 +36,7 @@
 - The publish job uses the GitHub environment named `release`; the crates.io trusted publisher must be configured with the same environment.
 - crates.io Trusted Publishing does not support the `pull_request_target` event, so the publish workflow intentionally runs from the `push` to `main` created by merging the automated release PR.
 - Recovery dispatches also use `publish.yml`, so there is a single publish path for normal releases and missed-release repair.
+- The release-state logic is implemented in `scripts/release_workflow.py`; the workflow YAML should stay as thin orchestration around that script.
 
 ## Protected Branch Notes
 

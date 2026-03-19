@@ -60,6 +60,7 @@ just changelog 0.1.0
 ```bash
 ./scripts/generate_loftr_state_dict.sh
 ./scripts/prepare_test_fixtures.sh
+python3 scripts/release_workflow.py --help
 ./scripts/validate_loftr_against_kornia.sh <left> <right>
 git-cliff --config cliff.toml --tag v0.1.0 --output CHANGELOG.md
 ```
@@ -208,6 +209,7 @@ Rules:
 ### Release Workflow
 
 - Use the GitHub `Prepare Release PR` workflow from `main` to recover any unfinished prepared releases, then bump the next version and regenerate `CHANGELOG.md`
+- The shared release state machine lives in `scripts/release_workflow.py`; keep workflow YAML thin and move new release logic there
 - Merge the generated `release/v*` pull request; the resulting `push` to `main` triggers the GitHub `Publish Release` workflow automatically
 - The publish workflow must not push commits to `main`; it only publishes the crate, pushes the tag, and creates the GitHub Release
 - The publish workflow validates that the `main` push is associated with the workflow-generated `release/v*` PR before it attempts crates.io authentication

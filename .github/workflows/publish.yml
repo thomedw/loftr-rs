@@ -43,278 +43,70 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source_ref || github.sha }}
 
-      - name: Refresh tags and main branch
-        run: |
-          set -euo pipefail
-          git fetch --force origin main --tags
-
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Inspect merged pull request for this push
-        if: ${{ github.event_name == 'push' }}
-        id: pr
-        env:
-          COMMIT_SHA: ${{ github.sha }}
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          mkdir -p target
-          gh api "repos/${REPOSITORY}/commits/${COMMIT_SHA}/pulls" \
-            -H "Accept: application/vnd.github+json" \
-            > target/associated-prs.json
-
-          python3 - <<'PY'
-          import json
-          import os
-          import re
-          from pathlib import Path
-
-          prs = json.loads(Path("target/associated-prs.json").read_text(encoding="utf-8"))
-          matches = []
-
-          for pr in prs:
-              if pr["state"] != "closed" or pr["merged_at"] is None:
-                  continue
-              if pr["base"]["ref"] != "main":
-                  continue
-
-              head_ref = pr["head"]["ref"]
-              if not re.fullmatch(r"release/v\d+\.\d+\.\d+", head_ref):
-                  continue
-
-              labels = {label["name"] for label in pr.get("labels", [])}
-              if "release:automated" not in labels:
-                  continue
-
-              expected_title = f"chore(release): prepare {head_ref.removeprefix('release/')}"
-              if pr["title"] != expected_title:
-                  continue
-
-              if pr["user"]["login"] not in {"github-actions[bot]", "app/github-actions"}:
-                  continue
-
-              matches.append(pr)
-
-          if len(matches) > 1:
-              raise SystemExit(
-                  f"expected at most one automated release PR for {os.environ['COMMIT_SHA']}, "
-                  f"found {len(matches)}"
-              )
-
-          output_path = Path(os.environ["GITHUB_OUTPUT"])
-          summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
-
-          if not matches:
-              output_path.write_text("release_pr=false\n", encoding="utf-8")
-              summary_path.write_text(
-                  "## Publish skipped\n\n"
-                  f"No merged automated release PR is associated with `{os.environ['COMMIT_SHA']}`.\n",
-                  encoding="utf-8",
-              )
-              raise SystemExit(0)
-
-          pr = matches[0]
-          head_ref = pr["head"]["ref"]
-          output_path.write_text(
-              "\n".join(
-                  [
-                      "release_pr=true",
-                      f"head_ref={head_ref}",
-                      f"source_ref={os.environ['COMMIT_SHA']}",
-                  ]
-              )
-              + "\n",
-              encoding="utf-8",
-          )
-          summary_path.write_text(
-              "## Release publish candidate\n\n"
-              f"- Release branch: `{head_ref}`\n"
-              f"- Source commit: `{os.environ['COMMIT_SHA']}`\n",
-              encoding="utf-8",
-          )
-          PY
-
-      - name: Validate recovery dispatch
-        if: ${{ github.event_name == 'workflow_dispatch' }}
-        id: recovery
-        env:
-          EXPECTED_VERSION: ${{ inputs.expected_version }}
-          SOURCE_REF: ${{ inputs.source_ref }}
-        run: |
-          set -euo pipefail
-          resolved_head="$(git rev-parse HEAD)"
-          if [ "${resolved_head}" != "${SOURCE_REF}" ]; then
-            echo "checked out ${resolved_head}, expected ${SOURCE_REF}" >&2
-            exit 1
-          fi
-
-          if ! git merge-base --is-ancestor "${SOURCE_REF}" origin/main; then
-            echo "recovery source ${SOURCE_REF} is not reachable from origin/main" >&2
-            exit 1
-          fi
-
-          {
-            echo "release_pr=true"
-            echo "head_ref=release/v${EXPECTED_VERSION}"
-            echo "source_ref=${SOURCE_REF}"
-          } >> "${GITHUB_OUTPUT}"
-
-          {
-            echo "## Release recovery candidate"
-            echo
-            echo "- Version: \`v${EXPECTED_VERSION}\`"
-            echo "- Source commit: \`${SOURCE_REF}\`"
-          } >> "${GITHUB_STEP_SUMMARY}"
-
-      - name: Derive release metadata
-        if: ${{ github.event_name == 'workflow_dispatch' || steps.pr.outputs.release_pr == 'true' }}
-        id: meta
-        env:
-          EXPECTED_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.expected_version || '' }}
-          HEAD_REF: ${{ github.event_name == 'workflow_dispatch' && steps.recovery.outputs.head_ref || steps.pr.outputs.head_ref }}
-          SOURCE_REF: ${{ github.event_name == 'workflow_dispatch' && steps.recovery.outputs.source_ref || steps.pr.outputs.source_ref }}
-        run: |
-          set -euo pipefail
-          version="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys; data = json.load(sys.stdin); pkg = next(p for p in data["packages"] if p["name"] == "loftr"); print(pkg["version"])')"
-          if [ -n "${EXPECTED_VERSION}" ] && [ "${version}" != "${EXPECTED_VERSION}" ]; then
-            echo "checked out version ${version}, expected ${EXPECTED_VERSION}" >&2
-            exit 1
-          fi
-
-          tag="v${version}"
-          expected_branch="release/${tag}"
-          if [ "${HEAD_REF}" != "${expected_branch}" ]; then
-            echo "release branch ${HEAD_REF} does not match crate version ${version}; expected ${expected_branch}" >&2
-            exit 1
-          fi
-
-          tag_exists=false
-          tag_target=""
-          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
-            tag_exists=true
-            tag_target="$(git rev-list -n1 "${tag}")"
-            if [ "${tag_target}" != "${SOURCE_REF}" ]; then
-              echo "tag ${tag} already points at ${tag_target}, expected ${SOURCE_REF}" >&2
-              exit 1
-            fi
-          fi
-
-          {
-            echo "source_ref=${SOURCE_REF}"
-            echo "tag=${tag}"
-            echo "tag_exists=${tag_exists}"
-            echo "tag_target=${tag_target}"
-            echo "title=loftr ${tag}"
-            echo "version=${version}"
-          } >> "${GITHUB_OUTPUT}"
-
-      - name: Check release state
-        if: ${{ github.event_name == 'workflow_dispatch' || steps.pr.outputs.release_pr == 'true' }}
-        id: state
+      - name: Derive publish context
+        id: release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          crate_published=false
-          if curl -fsS "https://crates.io/api/v1/crates/loftr/${{ steps.meta.outputs.version }}" >/dev/null; then
-            crate_published=true
-          fi
+          python3 scripts/release_workflow.py publish-context \
+            --event-name "${{ github.event_name }}" \
+            --repo "${{ github.repository }}" \
+            --commit-sha "${{ github.sha }}" \
+            --expected-version "${{ github.event_name == 'workflow_dispatch' && inputs.expected_version || '' }}" \
+            --source-ref "${{ github.event_name == 'workflow_dispatch' && inputs.source_ref || '' }}"
 
-          github_release_exists=false
-          if gh release view "${{ steps.meta.outputs.tag }}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            github_release_exists=true
-          fi
-
-          release_complete=false
-          if [ "${crate_published}" = true ] && [ "${github_release_exists}" = true ] && [ "${{ steps.meta.outputs.tag_exists }}" = true ]; then
-            release_complete=true
-          fi
-
-          {
-            echo "crate_published=${crate_published}"
-            echo "github_release_exists=${github_release_exists}"
-            echo "release_complete=${release_complete}"
-          } >> "${GITHUB_OUTPUT}"
-
-      - name: Extract release notes from changelog
-        if: ${{ github.event_name == 'workflow_dispatch' || steps.pr.outputs.release_pr == 'true' }}
-        env:
-          TAG: ${{ steps.meta.outputs.tag }}
+      - name: Extract release notes
+        if: ${{ steps.release.outputs.release_pr == 'true' }}
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import os
-          import re
-          from pathlib import Path
-
-          tag = os.environ["TAG"]
-          changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
-          pattern = re.compile(
-              rf"^## \[{re.escape(tag)}\][^\n]*\n.*?(?=^## \[|\Z)",
-              re.MULTILINE | re.DOTALL,
-          )
-          match = pattern.search(changelog)
-          if match is None:
-              raise SystemExit(f"failed to find release notes for {tag} in CHANGELOG.md")
-
-          Path("target").mkdir(exist_ok=True)
-          Path("target/release-notes.md").write_text(
-              match.group(0).strip() + "\n",
-              encoding="utf-8",
-          )
-          PY
+          python3 scripts/release_workflow.py extract-release-notes \
+            --tag "${{ steps.release.outputs.tag }}" \
+            --input CHANGELOG.md \
+            --output target/release-notes.md
 
       - name: Add release notes to summary
-        if: ${{ github.event_name == 'workflow_dispatch' || steps.pr.outputs.release_pr == 'true' }}
+        if: ${{ steps.release.outputs.release_pr == 'true' }}
         run: |
           {
-            echo "## ${{ steps.meta.outputs.title }}"
+            echo "## ${{ steps.release.outputs.title }}"
             echo
             cat target/release-notes.md
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Authenticate to crates.io via trusted publishing
-        if: >-
-          (github.event_name == 'workflow_dispatch' || steps.pr.outputs.release_pr == 'true') &&
-          steps.state.outputs.crate_published != 'true'
+        if: ${{ steps.release.outputs.release_pr == 'true' && steps.release.outputs.crate_published != 'true' }}
         id: auth
         uses: rust-lang/crates-io-auth-action@v1
 
       - name: Publish crate
-        if: >-
-          (github.event_name == 'workflow_dispatch' || steps.pr.outputs.release_pr == 'true') &&
-          steps.state.outputs.crate_published != 'true'
+        if: ${{ steps.release.outputs.release_pr == 'true' && steps.release.outputs.crate_published != 'true' }}
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: cargo publish -p loftr --features download-libtorch
 
       - name: Create annotated tag
-        if: >-
-          (github.event_name == 'workflow_dispatch' || steps.pr.outputs.release_pr == 'true') &&
-          steps.meta.outputs.tag_exists != 'true'
-        run: git tag -a "${{ steps.meta.outputs.tag }}" -m "Release ${{ steps.meta.outputs.tag }}"
+        if: ${{ steps.release.outputs.release_pr == 'true' && steps.release.outputs.tag_exists != 'true' }}
+        run: git tag -a "${{ steps.release.outputs.tag }}" -m "Release ${{ steps.release.outputs.tag }}"
 
       - name: Push release tag
-        if: >-
-          (github.event_name == 'workflow_dispatch' || steps.pr.outputs.release_pr == 'true') &&
-          steps.meta.outputs.tag_exists != 'true'
-        run: git push origin "${{ steps.meta.outputs.tag }}"
+        if: ${{ steps.release.outputs.release_pr == 'true' && steps.release.outputs.tag_exists != 'true' }}
+        run: git push origin "${{ steps.release.outputs.tag }}"
 
       - name: Create GitHub release
-        if: >-
-          (github.event_name == 'workflow_dispatch' || steps.pr.outputs.release_pr == 'true') &&
-          steps.state.outputs.github_release_exists != 'true'
+        if: ${{ steps.release.outputs.release_pr == 'true' && steps.release.outputs.github_release_exists != 'true' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ steps.meta.outputs.tag }}" \
+          gh release create "${{ steps.release.outputs.tag }}" \
             --repo "${{ github.repository }}" \
-            --title "${{ steps.meta.outputs.title }}" \
+            --title "${{ steps.release.outputs.title }}" \
             --verify-tag \
             --latest \
             -F target/release-notes.md
