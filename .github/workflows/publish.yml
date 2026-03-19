@@ -1,29 +1,25 @@
 name: Publish Release
 
 on:
-  pull_request_target:
-    types:
-      - closed
+  push:
+    branches:
+      - main
+    paths:
+      - Cargo.toml
+      - CHANGELOG.md
 
 jobs:
   release:
-    if: >-
-      github.event.pull_request.merged == true &&
-      github.event.pull_request.base.ref == 'main' &&
-      startsWith(github.event.pull_request.head.ref, 'release/v') &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.user.login == 'github-actions[bot]' &&
-      contains(github.event.pull_request.labels.*.name, 'release:automated')
     runs-on: ubuntu-latest
     environment: release
     permissions:
       contents: write
+      pull-requests: read
       id-token: write
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
 
       - uses: dtolnay/rust-toolchain@master
         with:
@@ -31,10 +27,98 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Inspect merged pull request for this push
+        id: pr
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p target
+          gh api "repos/${REPOSITORY}/commits/${COMMIT_SHA}/pulls" \
+            -H "Accept: application/vnd.github+json" \
+            > target/associated-prs.json
+
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          prs = json.loads(Path("target/associated-prs.json").read_text(encoding="utf-8"))
+          matches = []
+
+          for pr in prs:
+              if pr["state"] != "closed" or pr["merged_at"] is None:
+                  continue
+              if pr["base"]["ref"] != "main":
+                  continue
+
+              head_ref = pr["head"]["ref"]
+              if not re.fullmatch(r"release/v\d+\.\d+\.\d+", head_ref):
+                  continue
+
+              labels = {label["name"] for label in pr.get("labels", [])}
+              if "release:automated" not in labels:
+                  continue
+
+              expected_title = f"chore(release): prepare {head_ref.removeprefix('release/')}"
+              if pr["title"] != expected_title:
+                  continue
+
+              if pr["user"]["login"] not in {"github-actions[bot]", "app/github-actions"}:
+                  continue
+
+              matches.append(pr)
+
+          if len(matches) > 1:
+              raise SystemExit(
+                  f"expected at most one automated release PR for {os.environ['COMMIT_SHA']}, "
+                  f"found {len(matches)}"
+              )
+
+          output_path = Path(os.environ["GITHUB_OUTPUT"])
+          summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
+
+          if not matches:
+              output_path.write_text("release_pr=false\n", encoding="utf-8")
+              summary_path.write_text(
+                  "## Publish skipped\n\n"
+                  f"No merged automated release PR is associated with `{os.environ['COMMIT_SHA']}`.\n",
+                  encoding="utf-8",
+              )
+              raise SystemExit(0)
+
+          pr = matches[0]
+          head_ref = pr["head"]["ref"]
+          output_path.write_text(
+              "\n".join(
+                  [
+                      "release_pr=true",
+                      f"number={pr['number']}",
+                      f"head_ref={head_ref}",
+                      f"head_sha={pr['head']['sha']}",
+                      f"tag={head_ref.removeprefix('release/')}",
+                  ]
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          summary_path.write_text(
+              "## Release publish candidate\n\n"
+              f"- PR: #{pr['number']}\n"
+              f"- Release branch: `{head_ref}`\n"
+              f"- Merge commit: `{os.environ['COMMIT_SHA']}`\n",
+              encoding="utf-8",
+          )
+          PY
+
       - name: Derive release metadata
+        if: ${{ steps.pr.outputs.release_pr == 'true' }}
         id: meta
         env:
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REF: ${{ steps.pr.outputs.head_ref }}
         run: |
           set -euo pipefail
           version="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys; data = json.load(sys.stdin); pkg = next(p for p in data["packages"] if p["name"] == "loftr"); print(pkg["version"])')"
@@ -54,6 +138,7 @@ jobs:
           echo "title=loftr ${tag}" >> "${GITHUB_OUTPUT}"
 
       - name: Check release state
+        if: ${{ steps.pr.outputs.release_pr == 'true' }}
         id: state
         env:
           GH_TOKEN: ${{ github.token }}
@@ -71,6 +156,7 @@ jobs:
           fi
 
       - name: Extract release notes from changelog
+        if: ${{ steps.pr.outputs.release_pr == 'true' }}
         env:
           TAG: ${{ steps.meta.outputs.tag }}
         run: |
@@ -98,6 +184,7 @@ jobs:
           PY
 
       - name: Add release notes to summary
+        if: ${{ steps.pr.outputs.release_pr == 'true' }}
         run: |
           {
             echo "## ${{ steps.meta.outputs.title }}"
@@ -106,26 +193,26 @@ jobs:
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Authenticate to crates.io via trusted publishing
-        if: ${{ steps.state.outputs.crate_published != 'true' }}
+        if: ${{ steps.pr.outputs.release_pr == 'true' && steps.state.outputs.crate_published != 'true' }}
         id: auth
         uses: rust-lang/crates-io-auth-action@v1
 
       - name: Publish crate
-        if: ${{ steps.state.outputs.crate_published != 'true' }}
+        if: ${{ steps.pr.outputs.release_pr == 'true' && steps.state.outputs.crate_published != 'true' }}
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: cargo publish -p loftr --features download-libtorch
 
       - name: Create annotated tag
-        if: ${{ steps.meta.outputs.tag_exists != 'true' }}
+        if: ${{ steps.pr.outputs.release_pr == 'true' && steps.meta.outputs.tag_exists != 'true' }}
         run: git tag -a "${{ steps.meta.outputs.tag }}" -m "Release ${{ steps.meta.outputs.tag }}"
 
       - name: Push release tag
-        if: ${{ steps.meta.outputs.tag_exists != 'true' }}
+        if: ${{ steps.pr.outputs.release_pr == 'true' && steps.meta.outputs.tag_exists != 'true' }}
         run: git push origin "${{ steps.meta.outputs.tag }}"
 
       - name: Create GitHub release
-        if: ${{ steps.state.outputs.github_release_exists != 'true' }}
+        if: ${{ steps.pr.outputs.release_pr == 'true' && steps.state.outputs.github_release_exists != 'true' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |

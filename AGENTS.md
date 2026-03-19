@@ -208,8 +208,9 @@ Rules:
 ### Release Workflow
 
 - Use the GitHub `Prepare Release PR` workflow from `main` to bump the version and regenerate `CHANGELOG.md`
-- Merge the generated `release/v*` pull request to trigger the GitHub `Publish Release` workflow automatically
+- Merge the generated `release/v*` pull request; the resulting `push` to `main` triggers the GitHub `Publish Release` workflow automatically
 - The publish workflow must not push commits to `main`; it only publishes the crate, pushes the tag, and creates the GitHub Release
+- The publish workflow validates that the `main` push is associated with the workflow-generated `release/v*` PR before it attempts crates.io authentication
 - Configure crates.io Trusted Publishing for workflow file `publish.yml` and environment `release`
 - Do not reintroduce a long-lived `CRATES_IO_TOKEN` secret without a clear reason
 

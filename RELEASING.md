@@ -21,7 +21,7 @@
    - release notes in the PR body
 7. If additional commits land on `main`, rerun `Prepare Release PR` before merge so the release PR stays current.
 8. Merge the release PR into `main`.
-9. The `Publish Release` workflow will then:
+9. The merge push to `main` will trigger the `Publish Release` workflow, which will:
    - authenticate to crates.io via Trusted Publishing
    - publish `loftr`
    - create and push the annotated git tag `v<version>`
@@ -33,11 +33,13 @@
 - Real publishes depend on crates.io Trusted Publishing being enabled for this crate and repository.
 - The workflow requests an OIDC token with `id-token: write` and exchanges it with crates.io during the publish job.
 - The publish job uses the GitHub environment named `release`; the crates.io trusted publisher must be configured with the same environment.
+- crates.io Trusted Publishing does not support the `pull_request_target` event, so the publish workflow intentionally runs from the `push` to `main` created by merging the automated release PR.
 
 ## Protected Branch Notes
 
 - The repository should require pull requests for `main`.
 - The publish workflow must not push commits to `main`; only the release PR updates tracked files.
+- The publish workflow validates that the `main` push came from the workflow-generated `release/v*` pull request before it attempts a publish.
 - Prefer enabling “require branches to be up to date before merging” for the release PR so the generated changelog matches the commit set being released.
 
 ## Local Preview
