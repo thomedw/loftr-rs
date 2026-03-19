@@ -50,7 +50,7 @@ just changelog 0.1.0
 ./scripts/generate_loftr_state_dict.sh
 ./scripts/prepare_test_fixtures.sh
 ./scripts/validate_loftr_against_kornia.sh <left> <right>
-python3 scripts/update_changelog.py CHANGELOG.md target/release-notes.md
+git-cliff --config cliff.toml --tag v0.1.0 --output CHANGELOG.md
 ```
 
 ---
@@ -64,7 +64,7 @@ Cargo.toml              ← workspace root
 crates/loftr/           ← publishable library crate
 crates/loftr/examples/  ← runnable example binaries
 crates/loftr/tests/     ← integration tests
-scripts/                ← export, validation, and changelog helpers
+scripts/                ← export and validation helpers
 .github/workflows/      ← CI and release automation
 ```
 

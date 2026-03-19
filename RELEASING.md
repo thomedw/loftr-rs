@@ -35,5 +35,5 @@ If you want to preview the release notes locally, install `git-cliff` and run:
 
 ```bash
 git-cliff --config cliff.toml --unreleased --tag v0.1.0 --strip header --output target/release-notes.md
-python3 scripts/update_changelog.py CHANGELOG.md target/release-notes.md
+git-cliff --config cliff.toml --tag v0.1.0 --output CHANGELOG.md
 ```
