@@ -1,4 +1,4 @@
-name: Release-plz
+name: Publish
 
 on:
   push:
@@ -6,8 +6,8 @@ on:
       - main
 
 jobs:
-  release-plz-release:
-    name: Release-plz release
+  publish:
+    name: Publish
     runs-on: ubuntu-latest
     environment: release
     permissions:
@@ -33,15 +33,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  release-plz-pr:
-    name: Release-plz PR
+  prepare-release-pr:
+    name: Prepare Release PR
     runs-on: ubuntu-latest
     permissions:
       contents: write
       issues: write
       pull-requests: write
     concurrency:
-      group: release-plz-${{ github.ref }}
+      group: publish-${{ github.ref }}
       cancel-in-progress: false
     steps:
       - name: Checkout repository

@@ -6,7 +6,7 @@
 2. Confirm crates.io Trusted Publishing is configured for:
    - owner `thomedw`
    - repository `loftr-rs`
-   - workflow file `release-plz.yml`
+   - workflow file `publish.yml`
    - environment `release`
 3. Run:
    - `just fmt`
@@ -15,7 +15,7 @@
    - `just publish-dry-run`
 4. Confirm weights are not staged.
 5. Merge the changes you want released into `main`.
-6. The `Release-plz` workflow on `main` will:
+6. The `Publish` workflow on `main` will:
    - run `release-plz release-pr`
    - open or update the automated release PR when there is a releasable commit
 7. Review the generated release PR:
@@ -23,7 +23,7 @@
    - regenerated `CHANGELOG.md`
    - updated `Cargo.lock`
 8. Merge the release PR into `main`.
-9. The next `Release-plz` run on the merge push will:
+9. The next `Publish` run on the merge push will:
    - authenticate to crates.io via Trusted Publishing
    - publish `loftr`
    - create and push the git tag `v<version>`

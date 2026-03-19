@@ -206,10 +206,10 @@ Rules:
 
 ### Release Workflow
 
-- Use the GitHub `Release-plz` workflow on `main`; it opens or updates the automated release PR and publishes after that PR is merged
+- Use the GitHub `Publish` workflow on `main`; it opens or updates the automated release PR and publishes after that PR is merged
 - The release PR is expected to touch `Cargo.toml`, `CHANGELOG.md`, and `Cargo.lock`
 - The publish step must not push commits to `main`; it only publishes the crate, pushes the tag, and creates the GitHub Release
-- Configure crates.io Trusted Publishing for workflow file `release-plz.yml` and environment `release`
+- Configure crates.io Trusted Publishing for workflow file `publish.yml` and environment `release`
 - Do not reintroduce a long-lived `CRATES_IO_TOKEN` secret without a clear reason
 - The default `GITHUB_TOKEN` will not trigger CI on release PRs; if automatic release-PR checks matter, use a GitHub App token or machine-user PAT later
 - For local previews, use `release-plz update --allow-dirty` in a disposable clone or worktree instead of running it in the main checkout
