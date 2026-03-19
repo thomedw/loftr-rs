@@ -237,20 +237,16 @@ impl Backbone {
 }
 
 pub fn build_backbone(vs: &nn::Path<'_>, config: &LoftrConfig) -> Result<Backbone, LoftrError> {
-    if config.backbone_type != "ResNetFPN" {
-        return Err(LoftrError::InvalidConfig(format!(
-            "Unsupported LoFTR backbone type `{}`",
-            config.backbone_type
-        )));
-    }
-    match config.resolution {
-        (8, 2) => Ok(Backbone::ResNetFpn8_2(ResNetFpn8_2::new(
-            &(vs / "backbone"),
-            &config.resnetfpn,
-        )?)),
-        other => Err(LoftrError::InvalidConfig(format!(
-            "Unsupported LoFTR backbone resolution {other:?}; only (8, 2) is ported so far"
-        ))),
+    match config.backbone_type {
+        crate::loftr_config::BackboneType::ResNetFpn => match config.resolution {
+            (8, 2) => Ok(Backbone::ResNetFpn8_2(ResNetFpn8_2::new(
+                &(vs / "backbone"),
+                &config.resnetfpn,
+            )?)),
+            other => Err(LoftrError::InvalidConfig(format!(
+                "Unsupported LoFTR backbone resolution {other:?}; only (8, 2) is ported so far"
+            ))),
+        },
     }
 }
 

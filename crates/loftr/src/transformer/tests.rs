@@ -1,11 +1,11 @@
 use super::*;
-use crate::loftr_config::LoftrConfig;
+use crate::loftr_config::{AttentionType, LoftrConfig};
 use tch::{Device, Kind, nn};
 
 #[test]
 fn encoder_layer_preserves_shape() -> Result<(), LoftrError> {
     let vs = nn::VarStore::new(Device::Cpu);
-    let layer = LoFTREncoderLayer::new(&vs.root(), 256, 8, "linear")?;
+    let layer = LoFTREncoderLayer::new(&vs.root(), 256, 8, AttentionType::Linear)?;
     let x = Tensor::randn([2, 12, 256], (Kind::Float, Device::Cpu));
     let source = Tensor::randn([2, 15, 256], (Kind::Float, Device::Cpu));
     let out = layer.forward(&x, &source, None, None)?;
@@ -34,7 +34,7 @@ fn transformer_rejects_wrong_feature_dim() {
         d_model: config.d_model,
         d_ffn: config.d_ffn,
         nhead: config.nhead,
-        layer_names: config.layer_names,
+        layers: config.layers,
         attention: config.attention,
         temp_bug_fix: false,
     };

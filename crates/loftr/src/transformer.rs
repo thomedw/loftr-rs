@@ -6,7 +6,7 @@ use tch::{
 use crate::{
     error::LoftrError,
     linear_attention::{FullAttention, LinearAttention},
-    loftr_config::TransformerConfig,
+    loftr_config::{AttentionType, TransformerConfig, TransformerLayer},
 };
 
 #[derive(Debug)]
@@ -50,7 +50,7 @@ impl LoFTREncoderLayer {
         vs: &nn::Path<'_>,
         d_model: i64,
         nhead: i64,
-        attention: &str,
+        attention: AttentionType,
     ) -> Result<Self, LoftrError> {
         if d_model <= 0 || nhead <= 0 || d_model % nhead != 0 {
             return Err(LoftrError::InvalidConfig(format!(
@@ -58,10 +58,9 @@ impl LoFTREncoderLayer {
             )));
         }
 
-        let attention = if attention == "linear" {
-            AttentionKind::Linear(LinearAttention::default())
-        } else {
-            AttentionKind::Full(FullAttention::default())
+        let attention = match attention {
+            AttentionType::Linear => AttentionKind::Linear(LinearAttention::default()),
+            AttentionType::Full => AttentionKind::Full(FullAttention::default()),
         };
         let linear_config = nn::LinearConfig {
             bias: false,
@@ -140,26 +139,26 @@ impl LoFTREncoderLayer {
 #[derive(Debug)]
 pub struct LocalFeatureTransformer {
     d_model: i64,
-    layer_names: Vec<String>,
+    layer_types: Vec<TransformerLayer>,
     layers: Vec<LoFTREncoderLayer>,
 }
 
 impl LocalFeatureTransformer {
     pub fn new(vs: &nn::Path<'_>, config: &TransformerConfig) -> Result<Self, LoftrError> {
-        let mut layers = Vec::with_capacity(config.layer_names.len());
-        for (index, _) in config.layer_names.iter().enumerate() {
-            layers.push(LoFTREncoderLayer::new(
+        let mut encoder_layers = Vec::with_capacity(config.layers.len());
+        for (index, _) in config.layers.iter().enumerate() {
+            encoder_layers.push(LoFTREncoderLayer::new(
                 &(vs / "layers" / index.to_string()),
                 config.d_model,
                 config.nhead,
-                &config.attention,
+                config.attention,
             )?);
         }
 
         Ok(Self {
             d_model: config.d_model,
-            layer_names: config.layer_names.clone(),
-            layers,
+            layer_types: config.layers.clone(),
+            layers: encoder_layers,
         })
     }
 
@@ -183,22 +182,17 @@ impl LocalFeatureTransformer {
 
         let mut feat0 = feat0.shallow_clone();
         let mut feat1 = feat1.shallow_clone();
-        for (layer, name) in self.layers.iter().zip(self.layer_names.iter()) {
-            match name.as_str() {
-                "self" => {
+        for (layer, layer_kind) in self.layers.iter().zip(self.layer_types.iter()) {
+            match layer_kind {
+                TransformerLayer::SelfAttention => {
                     feat0 = layer.forward(&feat0, &feat0, mask0, mask0)?;
                     feat1 = layer.forward(&feat1, &feat1, mask1, mask1)?;
                 }
-                "cross" => {
+                TransformerLayer::CrossAttention => {
                     let next0 = layer.forward(&feat0, &feat1, mask0, mask1)?;
                     let next1 = layer.forward(&feat1, &next0, mask1, mask0)?;
                     feat0 = next0;
                     feat1 = next1;
-                }
-                other => {
-                    return Err(LoftrError::InvalidConfig(format!(
-                        "LocalFeatureTransformer unknown layer name `{other}`"
-                    )));
                 }
             }
         }

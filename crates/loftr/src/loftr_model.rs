@@ -110,14 +110,14 @@ impl LoFTRModel {
         )?;
         let loftr_coarse =
             LocalFeatureTransformer::new(&(root.clone() / "loftr_coarse"), &config.coarse)?;
-        let coarse_matching = CoarseMatching::new(&config.match_coarse)?;
+        let coarse_matching = CoarseMatching::new(&config.match_coarse);
         let fine_preprocess = FinePreprocess::new(&(root.clone() / "fine_preprocess"), &config)?;
         let fine_transformer_config = crate::loftr_config::TransformerConfig {
             d_model: config.fine.d_model,
             d_ffn: config.fine.d_ffn,
             nhead: config.fine.nhead,
-            layer_names: config.fine.layer_names.clone(),
-            attention: config.fine.attention.clone(),
+            layers: config.fine.layers.clone(),
+            attention: config.fine.attention,
             temp_bug_fix: false,
         };
         let loftr_fine =

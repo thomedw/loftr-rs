@@ -2,7 +2,7 @@ use tch::{Kind, Tensor};
 
 use crate::{
     error::LoftrError,
-    loftr_config::MatchCoarseConfig,
+    loftr_config::{MatchCoarseConfig, MatchType},
     numeric::{i64_pair_ratio_to_f64, i64_to_f64},
 };
 
@@ -36,16 +36,12 @@ pub struct CoarseMatching {
 }
 
 impl CoarseMatching {
-    pub fn new(config: &MatchCoarseConfig) -> Result<Self, LoftrError> {
-        if config.match_type != "dual_softmax" {
-            return Err(LoftrError::InvalidConfig(format!(
-                "CoarseMatching currently supports only dual_softmax; got `{}`",
-                config.match_type
-            )));
+    pub fn new(config: &MatchCoarseConfig) -> Self {
+        match config.match_type {
+            MatchType::DualSoftmax => Self {
+                config: config.clone(),
+            },
         }
-        Ok(Self {
-            config: config.clone(),
-        })
     }
 
     pub fn forward(
@@ -60,8 +56,12 @@ impl CoarseMatching {
 
         let feat_c0 = feat_c0 / i64_to_f64(feat_c0.size()[2], "feat_c0 channel dim")?.sqrt();
         let feat_c1 = feat_c1 / i64_to_f64(feat_c1.size()[2], "feat_c1 channel dim")?.sqrt();
-        let mut sim_matrix = Tensor::einsum("nlc,nsc->nls", &[&feat_c0, &feat_c1], None::<&[i64]>)
-            / self.config.dsmax_temperature;
+        let mut sim_matrix = match self.config.match_type {
+            MatchType::DualSoftmax => {
+                Tensor::einsum("nlc,nsc->nls", &[&feat_c0, &feat_c1], None::<&[i64]>)
+                    / self.config.dsmax_temperature
+            }
+        };
         if let (Some(mask_c0), Some(mask_c1)) = (mask_c0, mask_c1) {
             let valid = mask_c0
                 .f_to_device(sim_matrix.device())?
