@@ -16,8 +16,10 @@ on:
 jobs:
   release:
     runs-on: ubuntu-latest
+    environment: release
     permissions:
       contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@v5
         with:
@@ -98,15 +100,21 @@ jobs:
           git add CHANGELOG.md
           git commit -m "docs(changelog): update for ${{ steps.meta.outputs.tag }}"
 
-      - name: Publish crate
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+      - name: Publish crate dry run
+        if: ${{ inputs.dry_run }}
         run: |
-          if [ "${{ inputs.dry_run }}" = "true" ]; then
-            cargo publish --dry-run -p loftr --locked --features download-libtorch
-          else
-            cargo publish -p loftr --locked --features download-libtorch
-          fi
+          cargo publish --dry-run -p loftr --locked --features download-libtorch
+
+      - name: Authenticate to crates.io via trusted publishing
+        if: ${{ !inputs.dry_run }}
+        id: auth
+        uses: rust-lang/crates-io-auth-action@v1
+
+      - name: Publish crate
+        if: ${{ !inputs.dry_run }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: cargo publish -p loftr --locked --features download-libtorch
 
       - name: Create annotated tag
         if: ${{ !inputs.dry_run }}
