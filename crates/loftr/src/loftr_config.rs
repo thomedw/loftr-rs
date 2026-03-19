@@ -1,54 +1,95 @@
+/// Backbone parameters for the `ResNetFPN` encoder used by `LoFTR`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResNetFpnConfig {
+    /// Channel count produced by the initial stem convolution.
     pub initial_dim: i64,
+    /// Output channel counts for the three residual stages.
     pub block_dims: [i64; 3],
 }
 
+/// Transformer parameters shared by `LoFTR` coarse and fine stages.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransformerConfig {
+    /// Token embedding width.
     pub d_model: i64,
+    /// Feed-forward hidden width inside each encoder layer.
     pub d_ffn: i64,
+    /// Number of attention heads.
     pub nhead: i64,
+    /// Ordered encoder stage pattern, usually alternating `"self"` and `"cross"`.
     pub layer_names: Vec<String>,
+    /// Attention implementation name, such as `"linear"`.
     pub attention: String,
+    /// Whether to use Kornia's temperature bug-fix behavior in positional encoding.
     pub temp_bug_fix: bool,
 }
 
+/// Matching parameters for the coarse `LoFTR` correspondence stage.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MatchCoarseConfig {
+    /// Confidence threshold applied before mutual-nearest filtering.
     pub thr: f64,
+    /// Number of border cells to suppress on each coarse feature map edge.
     pub border_rm: i64,
+    /// Coarse matcher implementation name, currently expected to be `"dual_softmax"`.
     pub match_type: String,
+    /// Dual-softmax temperature scaling factor.
     pub dsmax_temperature: f64,
+    /// Sinkhorn iteration count from the reference config.
     pub skh_iters: i64,
+    /// Initial Sinkhorn bin score from the reference config.
     pub skh_init_bin_score: f64,
+    /// Whether Sinkhorn prefiltering is enabled in the reference config.
     pub skh_prefilter: bool,
+    /// Training-time coarse supervision percentage from the reference config.
     pub train_coarse_percent: f64,
+    /// Minimum padding count for training-time coarse supervision.
     pub train_pad_num_gt_min: i64,
 }
 
+/// Transformer parameters for the fine matching refinement stage.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FineConfig {
+    /// Token embedding width.
     pub d_model: i64,
+    /// Feed-forward hidden width inside each encoder layer.
     pub d_ffn: i64,
+    /// Number of attention heads.
     pub nhead: i64,
+    /// Ordered encoder stage pattern for the fine transformer.
     pub layer_names: Vec<String>,
+    /// Attention implementation name, such as `"linear"`.
     pub attention: String,
 }
 
+/// High-level `LoFTR` model configuration.
+///
+/// Most users should start from [`LoftrConfig::outdoor`] and only override
+/// fields when matching a known reference setup.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LoftrConfig {
+    /// Backbone implementation name, currently expected to be `"ResNetFPN"`.
     pub backbone_type: String,
+    /// Output stride pair `(coarse_stride, fine_stride)`.
     pub resolution: (i64, i64),
+    /// Fine-stage local window size in feature-grid cells.
     pub fine_window_size: i64,
+    /// Whether fine matching concatenates coarse token features before projection.
     pub fine_concat_coarse_feat: bool,
+    /// ResNet-FPN backbone parameters.
     pub resnetfpn: ResNetFpnConfig,
+    /// Coarse transformer parameters.
     pub coarse: TransformerConfig,
+    /// Coarse matching parameters.
     pub match_coarse: MatchCoarseConfig,
+    /// Fine transformer parameters.
     pub fine: FineConfig,
 }
 
 impl LoftrConfig {
+    /// Returns the default outdoor `LoFTR` preset used by this crate.
+    ///
+    /// This is also the [`Default`] configuration.
     #[must_use]
     pub fn outdoor() -> Self {
         Self {
@@ -98,6 +139,7 @@ impl LoftrConfig {
         }
     }
 
+    /// Returns the indoor `LoFTR` preset with Kornia's temperature fix enabled.
     #[must_use]
     pub fn indoor_new() -> Self {
         let mut config = Self::outdoor();

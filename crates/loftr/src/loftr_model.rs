@@ -19,6 +19,11 @@ use crate::{
     transformer::LocalFeatureTransformer,
 };
 
+/// `LoFTR` model instance with owned weights and inference state.
+///
+/// Construct a model with [`Self::new`], load weights with
+/// [`Self::load_weights`], and then run [`Self::forward`] or
+/// [`Self::forward_debug`].
 #[derive(Debug)]
 pub struct LoFTRModel {
     config: LoftrConfig,
@@ -31,6 +36,10 @@ pub struct LoFTRModel {
     loftr_fine: LocalFeatureTransformer,
 }
 
+/// Summary statistics for a tensor captured during debug inference.
+///
+/// This type is primarily intended for serialized validation output rather than
+/// for general tensor manipulation.
 #[derive(Debug, Serialize)]
 pub struct TensorDebugStats {
     shape: Vec<i64>,
@@ -43,6 +52,7 @@ pub struct TensorDebugStats {
     sample: Vec<f64>,
 }
 
+/// Summary statistics for coarse-stage matching outputs.
 #[derive(Debug, Serialize)]
 pub struct CoarseDebugStats {
     conf_matrix: TensorDebugStats,
@@ -53,6 +63,10 @@ pub struct CoarseDebugStats {
     confidence_max: f64,
 }
 
+/// Debug-stage summary returned by [`LoFTRModel::forward_debug`].
+///
+/// The contained values are aggregate statistics for intermediate tensors from
+/// image normalization through coarse matching.
 #[derive(Debug, Serialize)]
 pub struct LoftrDebugStages {
     image0: TensorDebugStats,
@@ -70,6 +84,15 @@ pub struct LoftrDebugStages {
 
 impl LoFTRModel {
     /// Builds a `LoFTR` model on the requested device.
+    ///
+    /// # Arguments
+    ///
+    /// * `device` - Device where model parameters and inference tensors will live.
+    /// * `config` - High-level `LoFTR` configuration preset or override set.
+    ///
+    /// # Returns
+    ///
+    /// A constructed model with allocated parameters but no loaded weights yet.
     ///
     /// # Errors
     ///
@@ -111,16 +134,32 @@ impl LoFTRModel {
         })
     }
 
+    /// Returns an immutable reference to the underlying `tch` variable store.
+    ///
+    /// This is useful when integrating with external `tch` helpers or inspecting
+    /// loaded parameters.
     #[must_use]
     pub fn var_store(&self) -> &VarStore {
         &self.var_store
     }
 
+    /// Returns a mutable reference to the underlying `tch` variable store.
+    ///
+    /// This is intended for advanced integrations that need direct access to the
+    /// backing parameter storage.
     pub fn var_store_mut(&mut self) -> &mut VarStore {
         &mut self.var_store
     }
 
     /// Loads model weights from a `safetensors` or Torch-compatible checkpoint.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Filesystem path to a checkpoint matching this model layout.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` when all model variables were loaded successfully.
     ///
     /// # Errors
     ///
@@ -131,6 +170,19 @@ impl LoFTRModel {
     }
 
     /// Runs `LoFTR` inference for one batch of image pairs.
+    ///
+    /// Inputs may be grayscale or RGB tensors in any format accepted by
+    /// [`normalize_loftr_image`]. Both images are normalized onto the model
+    /// device before inference.
+    ///
+    /// # Arguments
+    ///
+    /// * `image0` - Left image tensor.
+    /// * `image1` - Right image tensor.
+    ///
+    /// # Returns
+    ///
+    /// Matched keypoints, confidences, and batch indexes for the input pairs.
     ///
     /// # Errors
     ///
@@ -146,6 +198,19 @@ impl LoFTRModel {
     }
 
     /// Runs `LoFTR` inference and returns intermediate debug statistics.
+    ///
+    /// This method is intended for parity checks and diagnostics rather than
+    /// normal matching flows.
+    ///
+    /// # Arguments
+    ///
+    /// * `image0` - Left image tensor.
+    /// * `image1` - Right image tensor.
+    ///
+    /// # Returns
+    ///
+    /// Aggregate statistics for the major intermediate tensors in the matching
+    /// pipeline.
     ///
     /// # Errors
     ///

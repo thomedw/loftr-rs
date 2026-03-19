@@ -50,6 +50,17 @@ Not included in v0.1:
 - calibration pipelines
 - application-specific runtime glue
 
+## Public API
+
+The main crate exports a small, high-level surface:
+
+- `LoftrConfig` for preset and custom model configuration
+- `LoftrModel` for model construction, weight loading, and inference
+- `LoftrMatches` for match outputs
+- `LoftrDebugStages` for validation-oriented stage summaries
+- `normalize_loftr_image` for converting supported image layouts into LoFTR input tensors
+- `LoftrError` for public error handling
+
 ## Upstream References
 
 - [LoFTR upstream](https://github.com/zju3dv/LoFTR)
@@ -119,6 +130,9 @@ If you want automatic downloads, enable the feature that forwards to `tch`:
 ```bash
 cargo test -p loftr --features download-libtorch
 ```
+
+The published docs use the `doc-only` feature on docs.rs so they can render
+without linking libtorch.
 
 ## Workspace Commands
 
