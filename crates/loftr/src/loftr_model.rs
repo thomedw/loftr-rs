@@ -116,7 +116,7 @@ impl LoFTRModel {
             d_model: config.fine.d_model,
             d_ffn: config.fine.d_ffn,
             nhead: config.fine.nhead,
-            layer_kinds: config.fine.layer_kinds.clone(),
+            layers: config.fine.layers.clone(),
             attention: config.fine.attention,
             temp_bug_fix: false,
         };

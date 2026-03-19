@@ -34,7 +34,7 @@ fn transformer_rejects_wrong_feature_dim() {
         d_model: config.d_model,
         d_ffn: config.d_ffn,
         nhead: config.nhead,
-        layer_kinds: config.layer_kinds,
+        layers: config.layers,
         attention: config.attention,
         temp_bug_fix: false,
     };

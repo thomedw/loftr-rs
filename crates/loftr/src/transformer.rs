@@ -6,7 +6,7 @@ use tch::{
 use crate::{
     error::LoftrError,
     linear_attention::{FullAttention, LinearAttention},
-    loftr_config::{AttentionType, TransformerConfig, TransformerLayerKind},
+    loftr_config::{AttentionType, TransformerConfig, TransformerLayer},
 };
 
 #[derive(Debug)]
@@ -139,15 +139,15 @@ impl LoFTREncoderLayer {
 #[derive(Debug)]
 pub struct LocalFeatureTransformer {
     d_model: i64,
-    layer_kinds: Vec<TransformerLayerKind>,
+    layer_types: Vec<TransformerLayer>,
     layers: Vec<LoFTREncoderLayer>,
 }
 
 impl LocalFeatureTransformer {
     pub fn new(vs: &nn::Path<'_>, config: &TransformerConfig) -> Result<Self, LoftrError> {
-        let mut layers = Vec::with_capacity(config.layer_kinds.len());
-        for (index, _) in config.layer_kinds.iter().enumerate() {
-            layers.push(LoFTREncoderLayer::new(
+        let mut encoder_layers = Vec::with_capacity(config.layers.len());
+        for (index, _) in config.layers.iter().enumerate() {
+            encoder_layers.push(LoFTREncoderLayer::new(
                 &(vs / "layers" / index.to_string()),
                 config.d_model,
                 config.nhead,
@@ -157,8 +157,8 @@ impl LocalFeatureTransformer {
 
         Ok(Self {
             d_model: config.d_model,
-            layer_kinds: config.layer_kinds.clone(),
-            layers,
+            layer_types: config.layers.clone(),
+            layers: encoder_layers,
         })
     }
 
@@ -182,13 +182,13 @@ impl LocalFeatureTransformer {
 
         let mut feat0 = feat0.shallow_clone();
         let mut feat1 = feat1.shallow_clone();
-        for (layer, layer_kind) in self.layers.iter().zip(self.layer_kinds.iter()) {
+        for (layer, layer_kind) in self.layers.iter().zip(self.layer_types.iter()) {
             match layer_kind {
-                TransformerLayerKind::SelfAttention => {
+                TransformerLayer::SelfAttention => {
                     feat0 = layer.forward(&feat0, &feat0, mask0, mask0)?;
                     feat1 = layer.forward(&feat1, &feat1, mask1, mask1)?;
                 }
-                TransformerLayerKind::CrossAttention => {
+                TransformerLayer::CrossAttention => {
                     let next0 = layer.forward(&feat0, &feat1, mask0, mask1)?;
                     let next1 = layer.forward(&feat1, &next0, mask1, mask0)?;
                     feat0 = next0;

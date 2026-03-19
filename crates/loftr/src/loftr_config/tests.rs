@@ -8,14 +8,14 @@ fn outdoor_config_matches_kornia_defaults() {
     assert_eq!(config.fine_window_size, 5);
     assert!(config.fine_concat_coarse_feat);
     assert_eq!(config.resnetfpn.block_dims, [128, 196, 256]);
-    assert_eq!(config.coarse.layer_kinds.len(), 8);
+    assert_eq!(config.coarse.layers.len(), 8);
     assert_eq!(config.coarse.attention, AttentionType::Linear);
     assert_eq!(config.match_coarse.match_type, MatchType::DualSoftmax);
     assert_eq!(
-        config.fine.layer_kinds,
+        config.fine.layers,
         vec![
-            TransformerLayerKind::SelfAttention,
-            TransformerLayerKind::CrossAttention,
+            TransformerLayer::SelfAttention,
+            TransformerLayer::CrossAttention
         ]
     );
     assert!(!config.coarse.temp_bug_fix);

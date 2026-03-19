@@ -47,7 +47,7 @@ pub use crate::error::LoftrError;
 pub use crate::loftr::{LoftrMatches, normalize_loftr_image};
 pub use crate::loftr_config::{
     AttentionType, BackboneType, FineConfig, LoftrConfig, MatchCoarseConfig, MatchType,
-    ResNetFpnConfig, TransformerConfig, TransformerLayerKind,
+    ResNetFpnConfig, TransformerConfig, TransformerLayer,
 };
 pub use crate::loftr_model::{
     CoarseDebugStats, LoFTRModel as LoftrModel, LoftrDebugStages, TensorDebugStats,

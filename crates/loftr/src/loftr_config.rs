@@ -25,7 +25,7 @@ pub enum AttentionType {
 
 /// Transformer layer ordering used by `LoFTR` encoder stacks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TransformerLayerKind {
+pub enum TransformerLayer {
     /// Attend within the same feature stream.
     SelfAttention,
     /// Attend across the left and right feature streams.
@@ -42,7 +42,7 @@ pub struct TransformerConfig {
     /// Number of attention heads.
     pub nhead: i64,
     /// Ordered encoder stage pattern, usually alternating self and cross attention.
-    pub layer_kinds: Vec<TransformerLayerKind>,
+    pub layers: Vec<TransformerLayer>,
     /// Attention implementation used by each encoder layer.
     pub attention: AttentionType,
     /// Whether to use Kornia's temperature bug-fix behavior in positional encoding.
@@ -89,7 +89,7 @@ pub struct FineConfig {
     /// Number of attention heads.
     pub nhead: i64,
     /// Ordered encoder stage pattern for the fine transformer.
-    pub layer_kinds: Vec<TransformerLayerKind>,
+    pub layers: Vec<TransformerLayer>,
     /// Attention implementation used by each encoder layer.
     pub attention: AttentionType,
 }
@@ -137,15 +137,15 @@ impl LoftrConfig {
                 d_model: 256,
                 d_ffn: 256,
                 nhead: 8,
-                layer_kinds: vec![
-                    TransformerLayerKind::SelfAttention,
-                    TransformerLayerKind::CrossAttention,
-                    TransformerLayerKind::SelfAttention,
-                    TransformerLayerKind::CrossAttention,
-                    TransformerLayerKind::SelfAttention,
-                    TransformerLayerKind::CrossAttention,
-                    TransformerLayerKind::SelfAttention,
-                    TransformerLayerKind::CrossAttention,
+                layers: vec![
+                    TransformerLayer::SelfAttention,
+                    TransformerLayer::CrossAttention,
+                    TransformerLayer::SelfAttention,
+                    TransformerLayer::CrossAttention,
+                    TransformerLayer::SelfAttention,
+                    TransformerLayer::CrossAttention,
+                    TransformerLayer::SelfAttention,
+                    TransformerLayer::CrossAttention,
                 ],
                 attention: AttentionType::Linear,
                 temp_bug_fix: false,
@@ -165,9 +165,9 @@ impl LoftrConfig {
                 d_model: 128,
                 d_ffn: 128,
                 nhead: 8,
-                layer_kinds: vec![
-                    TransformerLayerKind::SelfAttention,
-                    TransformerLayerKind::CrossAttention,
+                layers: vec![
+                    TransformerLayer::SelfAttention,
+                    TransformerLayer::CrossAttention,
                 ],
                 attention: AttentionType::Linear,
             },
