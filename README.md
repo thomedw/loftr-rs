@@ -127,7 +127,15 @@ just fmt
 just check
 just prepare-test-fixtures
 just test
+just coverage
+just coverage-html
 just publish-dry-run
+```
+
+Install `cargo-llvm-cov` once if you want to run the local coverage commands:
+
+```bash
+cargo install cargo-llvm-cov
 ```
 
 ## Validation
