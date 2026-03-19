@@ -1,0 +1,11 @@
+/target
+/.idea
+/.vscode
+.DS_Store
+artifacts/weights/
+crates/loftr/tests/data/
+*.safetensors
+*.pt
+*.pth
+*.onnx
+

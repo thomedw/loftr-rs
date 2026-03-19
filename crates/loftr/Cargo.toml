@@ -1,0 +1,33 @@
+[package]
+name = "loftr"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+description = "Native Rust/tch implementation of LoFTR feature matching"
+documentation = "https://docs.rs/loftr"
+categories = ["computer-vision", "science::robotics"]
+keywords = ["loftr", "computer-vision", "feature-matching", "pytorch", "tch"]
+
+[features]
+default = []
+doc-only = ["tch/doc-only"]
+download-libtorch = ["tch/download-libtorch"]
+
+[dependencies]
+serde = { workspace = true }
+tch = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+image = { workspace = true }
+serde_json = { workspace = true }
+
+[package.metadata.docs.rs]
+features = ["doc-only"]
+
+[lints]
+workspace = true
+

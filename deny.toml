@@ -1,0 +1,19 @@
+[advisories]
+ignore = [
+    # Transitive through tch/torch-sys via zip. The advisory targets RFC 2822
+    # parsing in `time`; this crate does not accept or parse RFC 2822 input.
+    "RUSTSEC-2026-0009",
+]
+
+[licenses]
+allow = [
+    "Apache-2.0",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "Unicode-3.0",
+]
+
+[bans]
+multiple-versions = "allow"
