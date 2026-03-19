@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.1.1] - 2026-03-19
+
+
+
+### CI
+
+
+- Use release PR automation (#9)
+
+- Add dependabot config (#10)
+
+
+### Chores
+
+
+- **deps:** Bump the action-updates group with 3 updates (#12)
+
+- Stop tracking cargo lockfile (#13)
+
+
 ## [v0.1.0] - 2026-03-19
 
 
@@ -40,6 +60,8 @@ All notable changes to this project will be documented in this file.
 - Add upstream references and alpha caution (#2)
 
 - Add public API rustdoc (#7)
+
+- **changelog:** Update for v0.1.0
 
 
 ### Features
