@@ -25,7 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn load_grayscale(path: &Path) -> Result<Tensor, Box<dyn std::error::Error>> {
     let image = image::open(path)?;
-    let image = resize_for_loftr(image);
+    let image = resize_for_loftr(&image);
     let image = image.to_luma32f();
     let height = i64::from(image.height());
     let width = i64::from(image.width());
@@ -37,6 +37,6 @@ fn load_grayscale(path: &Path) -> Result<Tensor, Box<dyn std::error::Error>> {
     Ok(tensor)
 }
 
-fn resize_for_loftr(image: DynamicImage) -> DynamicImage {
+fn resize_for_loftr(image: &DynamicImage) -> DynamicImage {
     image.resize_exact(960, 540, FilterType::Triangle)
 }

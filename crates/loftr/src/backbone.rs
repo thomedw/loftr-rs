@@ -54,14 +54,18 @@ impl BasicBlock {
         } else {
             Some((
                 conv1x1(&(vs / "downsample" / "0"), in_planes, planes, stride),
-                nn::batch_norm2d(&(vs / "downsample" / "1"), planes, Default::default()),
+                nn::batch_norm2d(
+                    &(vs / "downsample" / "1"),
+                    planes,
+                    nn::BatchNormConfig::default(),
+                ),
             ))
         };
         Self {
             conv1: conv3x3(&(vs / "conv1"), in_planes, planes, stride),
             conv2: conv3x3(&(vs / "conv2"), planes, planes, 1),
-            bn1: nn::batch_norm2d(&(vs / "bn1"), planes, Default::default()),
-            bn2: nn::batch_norm2d(&(vs / "bn2"), planes, Default::default()),
+            bn1: nn::batch_norm2d(&(vs / "bn1"), planes, nn::BatchNormConfig::default()),
+            bn2: nn::batch_norm2d(&(vs / "bn2"), planes, nn::BatchNormConfig::default()),
             downsample,
         }
     }
@@ -111,7 +115,7 @@ impl FpnHead {
     fn new(vs: &nn::Path<'_>, in_planes: i64, hidden_planes: i64, out_planes: i64) -> Self {
         Self {
             conv1: conv3x3(&(vs / "0"), in_planes, hidden_planes, 1),
-            bn: nn::batch_norm2d(&(vs / "1"), hidden_planes, Default::default()),
+            bn: nn::batch_norm2d(&(vs / "1"), hidden_planes, nn::BatchNormConfig::default()),
             conv2: conv3x3(&(vs / "3"), hidden_planes, out_planes, 1),
         }
     }
@@ -144,8 +148,7 @@ impl ResNetFpn8_2 {
         let block_dims = config.block_dims;
         if initial_dim <= 0 || block_dims.iter().any(|dim| *dim <= 0) {
             return Err(LoftrError::InvalidConfig(format!(
-                "ResNetFpn8_2 requires positive dimensions; got initial_dim={}, block_dims={:?}",
-                initial_dim, block_dims
+                "ResNetFpn8_2 requires positive dimensions; got initial_dim={initial_dim}, block_dims={block_dims:?}"
             )));
         }
 
@@ -161,7 +164,7 @@ impl ResNetFpn8_2 {
                 ..Default::default()
             },
         );
-        let bn1 = nn::batch_norm2d(&(vs / "bn1"), initial_dim, Default::default());
+        let bn1 = nn::batch_norm2d(&(vs / "bn1"), initial_dim, nn::BatchNormConfig::default());
         let (layer1, next_planes) =
             ResNetLayer::new(&(vs / "layer1"), initial_dim, block_dims[0], 1);
         let (layer2, next_planes) =
@@ -196,8 +199,7 @@ impl ResNetFpn8_2 {
         let dims = x.size();
         if dims.len() != 4 || dims[1] != 1 {
             return Err(LoftrError::InvalidInput(format!(
-                "ResNetFpn8_2 expects grayscale [N,1,H,W] input; got {:?}",
-                dims
+                "ResNetFpn8_2 expects grayscale [N,1,H,W] input; got {dims:?}"
             )));
         }
 
@@ -247,37 +249,36 @@ pub fn build_backbone(vs: &nn::Path<'_>, config: &LoftrConfig) -> Result<Backbon
             &config.resnetfpn,
         )?)),
         other => Err(LoftrError::InvalidConfig(format!(
-            "Unsupported LoFTR backbone resolution {:?}; only (8, 2) is ported so far",
-            other
+            "Unsupported LoFTR backbone resolution {other:?}; only (8, 2) is ported so far"
         ))),
     }
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
     use tch::{Device, Kind};
 
     #[test]
-    fn resnet_fpn_8_2_matches_expected_output_shapes() {
+    fn resnet_fpn_8_2_matches_expected_output_shapes() -> Result<(), LoftrError> {
         let vs = nn::VarStore::new(Device::Cpu);
-        let backbone =
-            ResNetFpn8_2::new(&vs.root(), &LoftrConfig::outdoor().resnetfpn).expect("backbone");
+        let backbone = ResNetFpn8_2::new(&vs.root(), &LoftrConfig::outdoor().resnetfpn)?;
         let input = Tensor::randn([1, 1, 240, 320], (Kind::Float, Device::Cpu));
-        let (coarse, fine) = backbone.forward_t(&input, false).expect("forward");
+        let (coarse, fine) = backbone.forward_t(&input, false)?;
         assert_eq!(coarse.size(), vec![1, 256, 30, 40]);
         assert_eq!(fine.size(), vec![1, 128, 120, 160]);
+        Ok(())
     }
 
     #[test]
-    fn build_backbone_supports_outdoor_config() {
+    fn build_backbone_supports_outdoor_config() -> Result<(), LoftrError> {
         let vs = nn::VarStore::new(Device::Cpu);
-        let backbone = build_backbone(&vs.root(), &LoftrConfig::outdoor()).expect("build");
+        let backbone = build_backbone(&vs.root(), &LoftrConfig::outdoor())?;
         let input = Tensor::randn([1, 1, 120, 160], (Kind::Float, Device::Cpu));
-        let (coarse, fine) = backbone.forward_t(&input, false).expect("forward");
+        let (coarse, fine) = backbone.forward_t(&input, false)?;
         assert_eq!(coarse.size(), vec![1, 256, 15, 20]);
         assert_eq!(fine.size(), vec![1, 128, 60, 80]);
+        Ok(())
     }
 
     #[test]
@@ -285,7 +286,9 @@ mod tests {
         let vs = nn::VarStore::new(Device::Cpu);
         let mut config = LoftrConfig::outdoor();
         config.resolution = (16, 4);
-        let err = build_backbone(&vs.root(), &config).expect_err("unsupported resolution");
-        assert!(format!("{err}").contains("only (8, 2) is ported"));
+        match build_backbone(&vs.root(), &config) {
+            Ok(_) => panic!("unsupported resolution should fail"),
+            Err(err) => assert!(format!("{err}").contains("only (8, 2) is ported")),
+        }
     }
 }

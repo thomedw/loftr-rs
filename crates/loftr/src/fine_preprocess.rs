@@ -89,35 +89,35 @@ impl FinePreprocess {
 
     pub fn forward(
         &self,
-        feat_f0: &Tensor,
-        feat_f1: &Tensor,
-        feat_c0: &Tensor,
-        feat_c1: &Tensor,
+        fine_map0: &Tensor,
+        fine_map1: &Tensor,
+        coarse_tokens0: &Tensor,
+        coarse_tokens1: &Tensor,
         data: &FinePreprocessData,
     ) -> Result<(Tensor, Tensor), LoftrError> {
-        validate_fine_map(feat_f0, "feat_f0", self.d_model_f)?;
-        validate_fine_map(feat_f1, "feat_f1", self.d_model_f)?;
-        validate_coarse_sequence(feat_c0, "feat_c0")?;
-        validate_coarse_sequence(feat_c1, "feat_c1")?;
+        validate_fine_map(fine_map0, "fine_map0", self.d_model_f)?;
+        validate_fine_map(fine_map1, "fine_map1", self.d_model_f)?;
+        validate_coarse_sequence(coarse_tokens0, "coarse_tokens0")?;
+        validate_coarse_sequence(coarse_tokens1, "coarse_tokens1")?;
 
         let match_count = data.match_count()?;
         let stride = data.stride()?;
         if match_count == 0 {
             let empty = Tensor::empty(
                 [0, self.window_size * self.window_size, self.d_model_f],
-                (Kind::Float, feat_f0.device()),
+                (Kind::Float, fine_map0.device()),
             );
             return Ok((empty.shallow_clone(), empty));
         }
 
-        let feat_f0_unfold = unfold_local_windows(feat_f0, self.window_size, stride)?;
-        let feat_f1_unfold = unfold_local_windows(feat_f1, self.window_size, stride)?;
+        let fine_windows0 = unfold_local_windows(fine_map0, self.window_size, stride)?;
+        let fine_windows1 = unfold_local_windows(fine_map1, self.window_size, stride)?;
 
-        let feat_f0_unfold = select_unfold_windows(&feat_f0_unfold, &data.b_ids, &data.i_ids)?;
-        let feat_f1_unfold = select_unfold_windows(&feat_f1_unfold, &data.b_ids, &data.j_ids)?;
+        let fine_windows0 = select_unfold_windows(&fine_windows0, &data.b_ids, &data.i_ids)?;
+        let fine_windows1 = select_unfold_windows(&fine_windows1, &data.b_ids, &data.j_ids)?;
 
         if !self.cat_coarse_feat {
-            return Ok((feat_f0_unfold, feat_f1_unfold));
+            return Ok((fine_windows0, fine_windows1));
         }
 
         let down_proj = self.down_proj.as_ref().ok_or_else(|| {
@@ -131,14 +131,11 @@ impl FinePreprocess {
             ))
         })?;
 
-        let coarse0 = select_sequence_tokens(feat_c0, &data.b_ids, &data.i_ids)?;
-        let coarse1 = select_sequence_tokens(feat_c1, &data.b_ids, &data.j_ids)?;
-        let coarse_context = Tensor::cat(&[coarse0, coarse1], 0).apply(down_proj);
+        let coarse_context0 = select_sequence_tokens(coarse_tokens0, &data.b_ids, &data.i_ids)?;
+        let coarse_context1 = select_sequence_tokens(coarse_tokens1, &data.b_ids, &data.j_ids)?;
+        let coarse_context = Tensor::cat(&[coarse_context0, coarse_context1], 0).apply(down_proj);
         let fine_windows = Tensor::cat(
-            &[
-                feat_f0_unfold.shallow_clone(),
-                feat_f1_unfold.shallow_clone(),
-            ],
+            &[fine_windows0.shallow_clone(), fine_windows1.shallow_clone()],
             0,
         );
         let coarse_context =
@@ -155,8 +152,7 @@ fn first_dim(tensor: &Tensor, label: &str) -> Result<i64, LoftrError> {
     let dims = tensor.size();
     if dims.len() != 1 {
         return Err(LoftrError::InvalidConfig(format!(
-            "FinePreprocessData `{label}` must be rank-1; got {:?}",
-            dims
+            "FinePreprocessData `{label}` must be rank-1; got {dims:?}"
         )));
     }
     Ok(dims[0])
@@ -170,8 +166,7 @@ fn validate_fine_map(
     let dims = tensor.size();
     if dims.len() != 4 {
         return Err(LoftrError::InvalidConfig(format!(
-            "FinePreprocess `{label}` expects [N,C,H,W]; got {:?}",
-            dims
+            "FinePreprocess `{label}` expects [N,C,H,W]; got {dims:?}"
         )));
     }
     if dims[1] != expected_channels {
@@ -187,8 +182,7 @@ fn validate_coarse_sequence(tensor: &Tensor, label: &str) -> Result<(), LoftrErr
     let dims = tensor.size();
     if dims.len() != 3 {
         return Err(LoftrError::InvalidConfig(format!(
-            "FinePreprocess `{label}` expects [N,L,C]; got {:?}",
-            dims
+            "FinePreprocess `{label}` expects [N,L,C]; got {dims:?}"
         )));
     }
     Ok(())
@@ -209,15 +203,13 @@ fn unfold_local_windows(
     let unfolded_dims = unfolded.size();
     if unfolded_dims.len() != 3 {
         return Err(LoftrError::InvalidConfig(format!(
-            "FinePreprocess im2col expected [N,C*W*W,L]; got {:?}",
-            unfolded_dims
+            "FinePreprocess im2col expected [N,C*W*W,L]; got {unfolded_dims:?}"
         )));
     }
     let window_area = window_size * window_size;
     if unfolded_dims[1] % window_area != 0 {
         return Err(LoftrError::InvalidConfig(format!(
-            "FinePreprocess im2col channel area mismatch: {:?} with window_area={window_area}",
-            unfolded_dims
+            "FinePreprocess im2col channel area mismatch: {unfolded_dims:?} with window_area={window_area}"
         )));
     }
     let channels = unfolded_dims[1] / window_area;
@@ -240,8 +232,7 @@ fn select_unfold_windows(
     let dims = windows.size();
     if dims.len() != 4 {
         return Err(LoftrError::InvalidConfig(format!(
-            "FinePreprocess windows expect [N,L,WW,C]; got {:?}",
-            dims
+            "FinePreprocess windows expect [N,L,WW,C]; got {dims:?}"
         )));
     }
     let batch_offsets = normalize_index_tensor(b_ids, windows.device())? * dims[1];
@@ -260,8 +251,7 @@ fn select_sequence_tokens(
     let dims = sequence.size();
     if dims.len() != 3 {
         return Err(LoftrError::InvalidConfig(format!(
-            "FinePreprocess coarse sequence expects [N,L,C]; got {:?}",
-            dims
+            "FinePreprocess coarse sequence expects [N,L,C]; got {dims:?}"
         )));
     }
     let batch_offsets = normalize_index_tensor(b_ids, sequence.device())? * dims[1];
@@ -276,27 +266,25 @@ fn normalize_index_tensor(indexes: &Tensor, device: Device) -> Result<Tensor, Lo
     let dims = indexes.size();
     if dims.len() != 1 {
         return Err(LoftrError::InvalidConfig(format!(
-            "FinePreprocess indexes must be rank-1; got {:?}",
-            dims
+            "FinePreprocess indexes must be rank-1; got {dims:?}"
         )));
     }
     Ok(indexes.f_to_device(device)?.f_to_kind(Kind::Int64)?)
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
 
-    fn cpu_module(config: &LoftrConfig) -> FinePreprocess {
+    fn cpu_module(config: &LoftrConfig) -> Result<FinePreprocess, LoftrError> {
         let vs = nn::VarStore::new(Device::Cpu);
-        FinePreprocess::new(&vs.root(), config).expect("fine preprocess")
+        FinePreprocess::new(&vs.root(), config)
     }
 
     #[test]
-    fn empty_matches_return_empty_windows() {
+    fn empty_matches_return_empty_windows() -> Result<(), LoftrError> {
         let config = LoftrConfig::outdoor();
-        let module = cpu_module(&config);
+        let module = cpu_module(&config)?;
         let data = FinePreprocessData {
             hw0_f: (4, 4),
             hw0_c: (2, 2),
@@ -304,39 +292,49 @@ mod tests {
             i_ids: Tensor::zeros([0], (Kind::Int64, Device::Cpu)),
             j_ids: Tensor::zeros([0], (Kind::Int64, Device::Cpu)),
         };
-        let feat_f0 = Tensor::zeros([1, 128, 4, 4], (Kind::Float, Device::Cpu));
-        let feat_f1 = Tensor::zeros([1, 128, 4, 4], (Kind::Float, Device::Cpu));
-        let feat_c0 = Tensor::zeros([1, 4, 256], (Kind::Float, Device::Cpu));
-        let feat_c1 = Tensor::zeros([1, 4, 256], (Kind::Float, Device::Cpu));
+        let fine_map0 = Tensor::zeros([1, 128, 4, 4], (Kind::Float, Device::Cpu));
+        let fine_map1 = Tensor::zeros([1, 128, 4, 4], (Kind::Float, Device::Cpu));
+        let coarse_tokens0 = Tensor::zeros([1, 4, 256], (Kind::Float, Device::Cpu));
+        let coarse_tokens1 = Tensor::zeros([1, 4, 256], (Kind::Float, Device::Cpu));
 
-        let (out0, out1) = module
-            .forward(&feat_f0, &feat_f1, &feat_c0, &feat_c1, &data)
-            .expect("empty output");
+        let (out0, out1) = module.forward(
+            &fine_map0,
+            &fine_map1,
+            &coarse_tokens0,
+            &coarse_tokens1,
+            &data,
+        )?;
         assert_eq!(out0.size(), vec![0, 25, 128]);
         assert_eq!(out1.size(), vec![0, 25, 128]);
+        Ok(())
     }
 
     #[test]
-    fn unfold_local_windows_matches_expected_patch_layout() {
+    fn unfold_local_windows_matches_expected_patch_layout() -> Result<(), LoftrError> {
         let unfolded = unfold_local_windows(
             &Tensor::arange_start(1, 17, (Kind::Float, Device::Cpu)).view([1, 1, 4, 4]),
             3,
             2,
-        )
-        .expect("unfold");
+        )?;
         assert_eq!(unfolded.size(), vec![1, 4, 9, 1]);
 
         let top_left = unfolded.get(0).get(0).squeeze_dim(-1);
-        let values: Vec<f32> = Vec::<f32>::try_from(top_left).expect("values");
-        assert_eq!(values, vec![0.0, 0.0, 0.0, 0.0, 1.0, 2.0, 0.0, 5.0, 6.0]);
+        let values: Vec<f32> = Vec::<f32>::try_from(top_left)?;
+        for (actual, expected) in values
+            .into_iter()
+            .zip([0.0_f32, 0.0, 0.0, 0.0, 1.0, 2.0, 0.0, 5.0, 6.0])
+        {
+            assert!((actual - expected).abs() < f32::EPSILON);
+        }
+        Ok(())
     }
 
     #[test]
-    fn forward_selects_only_requested_windows_without_concat() {
+    fn forward_selects_only_requested_windows_without_concat() -> Result<(), LoftrError> {
         let mut config = LoftrConfig::outdoor();
         config.fine_window_size = 3;
         config.fine_concat_coarse_feat = false;
-        let module = cpu_module(&config);
+        let module = cpu_module(&config)?;
         let data = FinePreprocessData {
             hw0_f: (4, 4),
             hw0_c: (2, 2),
@@ -344,15 +342,19 @@ mod tests {
             i_ids: Tensor::from_slice(&[0_i64, 3]),
             j_ids: Tensor::from_slice(&[1_i64, 2]),
         };
-        let feat_f0 = Tensor::arange_start(1, 1 + 128 * 4 * 4, (Kind::Float, Device::Cpu))
+        let fine_map0 = Tensor::arange_start(1, 1 + 128 * 4 * 4, (Kind::Float, Device::Cpu))
             .view([1, 128, 4, 4]);
-        let feat_f1 = (&feat_f0 + 10_000.0).shallow_clone();
-        let feat_c0 = Tensor::zeros([1, 4, 256], (Kind::Float, Device::Cpu));
-        let feat_c1 = Tensor::zeros([1, 4, 256], (Kind::Float, Device::Cpu));
+        let fine_map1 = (&fine_map0 + 10_000.0).shallow_clone();
+        let coarse_tokens0 = Tensor::zeros([1, 4, 256], (Kind::Float, Device::Cpu));
+        let coarse_tokens1 = Tensor::zeros([1, 4, 256], (Kind::Float, Device::Cpu));
 
-        let (out0, out1) = module
-            .forward(&feat_f0, &feat_f1, &feat_c0, &feat_c1, &data)
-            .expect("forward");
+        let (out0, out1) = module.forward(
+            &fine_map0,
+            &fine_map1,
+            &coarse_tokens0,
+            &coarse_tokens1,
+            &data,
+        )?;
         assert_eq!(out0.size(), vec![2, 9, 128]);
         assert_eq!(out1.size(), vec![2, 9, 128]);
 
@@ -361,16 +363,17 @@ mod tests {
         let first_right_center = out1.get(0).get(4).double_value(&[0]);
         let second_right_center = out1.get(1).get(4).double_value(&[0]);
 
-        assert_eq!(first_center, 1.0);
-        assert_eq!(second_center, 11.0);
-        assert_eq!(first_right_center, 10_003.0);
-        assert_eq!(second_right_center, 10_009.0);
+        assert!((first_center - 1.0).abs() < f64::EPSILON);
+        assert!((second_center - 11.0).abs() < f64::EPSILON);
+        assert!((first_right_center - 10_003.0).abs() < f64::EPSILON);
+        assert!((second_right_center - 10_009.0).abs() < f64::EPSILON);
+        Ok(())
     }
 
     #[test]
-    fn forward_with_concat_keeps_output_shape() {
+    fn forward_with_concat_keeps_output_shape() -> Result<(), LoftrError> {
         let config = LoftrConfig::outdoor();
-        let module = cpu_module(&config);
+        let module = cpu_module(&config)?;
         let data = FinePreprocessData {
             hw0_f: (4, 4),
             hw0_c: (2, 2),
@@ -378,20 +381,25 @@ mod tests {
             i_ids: Tensor::from_slice(&[0_i64, 1, 3]),
             j_ids: Tensor::from_slice(&[1_i64, 2, 0]),
         };
-        let feat_f0 = Tensor::randn([1, 128, 4, 4], (Kind::Float, Device::Cpu));
-        let feat_f1 = Tensor::randn([1, 128, 4, 4], (Kind::Float, Device::Cpu));
-        let feat_c0 = Tensor::randn([1, 4, 256], (Kind::Float, Device::Cpu));
-        let feat_c1 = Tensor::randn([1, 4, 256], (Kind::Float, Device::Cpu));
+        let fine_map0 = Tensor::randn([1, 128, 4, 4], (Kind::Float, Device::Cpu));
+        let fine_map1 = Tensor::randn([1, 128, 4, 4], (Kind::Float, Device::Cpu));
+        let coarse_tokens0 = Tensor::randn([1, 4, 256], (Kind::Float, Device::Cpu));
+        let coarse_tokens1 = Tensor::randn([1, 4, 256], (Kind::Float, Device::Cpu));
 
-        let (out0, out1) = module
-            .forward(&feat_f0, &feat_f1, &feat_c0, &feat_c1, &data)
-            .expect("forward");
+        let (out0, out1) = module.forward(
+            &fine_map0,
+            &fine_map1,
+            &coarse_tokens0,
+            &coarse_tokens1,
+            &data,
+        )?;
         assert_eq!(out0.size(), vec![3, 25, 128]);
         assert_eq!(out1.size(), vec![3, 25, 128]);
+        Ok(())
     }
 
     #[test]
-    fn stride_matches_kornia_height_axis_behavior() {
+    fn stride_matches_kornia_height_axis_behavior() -> Result<(), LoftrError> {
         let data = FinePreprocessData {
             hw0_f: (8, 12),
             hw0_c: (4, 4),
@@ -399,6 +407,7 @@ mod tests {
             i_ids: Tensor::zeros([0], (Kind::Int64, Device::Cpu)),
             j_ids: Tensor::zeros([0], (Kind::Int64, Device::Cpu)),
         };
-        assert_eq!(data.stride().expect("stride"), 2);
+        assert_eq!(data.stride()?, 2);
+        Ok(())
     }
 }

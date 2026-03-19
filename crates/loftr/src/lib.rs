@@ -7,6 +7,7 @@ mod linear_attention;
 mod loftr;
 mod loftr_config;
 mod loftr_model;
+mod numeric;
 mod position_encoding;
 mod transformer;
 

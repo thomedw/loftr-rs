@@ -1,6 +1,9 @@
 use tch::{Kind, Tensor};
 
-use crate::error::LoftrError;
+use crate::{
+    error::LoftrError,
+    numeric::{i64_pair_ratio_to_f64, i64_to_f64, perfect_square_root},
+};
 
 #[derive(Debug)]
 pub struct FineMatchingData {
@@ -24,7 +27,6 @@ pub struct FineMatching;
 
 impl FineMatching {
     pub fn forward(
-        &self,
         feat_f0: &Tensor,
         feat_f1: &Tensor,
         data: &FineMatchingData,
@@ -45,7 +47,7 @@ impl FineMatching {
 
         let feat_f0_center = feat_f0.select(1, window_area / 2);
         let sim_matrix = Tensor::einsum("mc,mrc->mr", &[&feat_f0_center, feat_f1], None::<&[i64]>);
-        let softmax_temp = 1.0 / (channel_dim as f64).sqrt();
+        let softmax_temp = 1.0 / i64_to_f64(channel_dim, "fine matching channel dim")?.sqrt();
         let heatmap = (sim_matrix * softmax_temp).softmax(1, Kind::Float).view([
             match_count,
             window_size,
@@ -66,7 +68,8 @@ impl FineMatching {
 
         let mkpts0_f = data.mkpts0_c.shallow_clone();
         let scale1 = scale_factor_for_matches(data, feat_f0.device())?;
-        let mkpts1_f = &data.mkpts1_c + coords_normalized * ((window_size / 2) as f64) * scale1;
+        let mkpts1_f = &data.mkpts1_c
+            + coords_normalized * i64_to_f64(window_size / 2, "fine window radius")? * scale1;
 
         Ok(FineMatchingOutput { mkpts0_f, mkpts1_f })
     }
@@ -81,14 +84,12 @@ fn validate_fine_match_inputs(
     let right_dims = feat_f1.size();
     if left_dims.len() != 3 || right_dims.len() != 3 {
         return Err(LoftrError::InvalidConfig(format!(
-            "FineMatching expects [M,WW,C] tensors; got feat_f0={:?}, feat_f1={:?}",
-            left_dims, right_dims
+            "FineMatching expects [M,WW,C] tensors; got feat_f0={left_dims:?}, feat_f1={right_dims:?}"
         )));
     }
     if left_dims != right_dims {
         return Err(LoftrError::InvalidConfig(format!(
-            "FineMatching requires matching tensor shapes; got feat_f0={:?}, feat_f1={:?}",
-            left_dims, right_dims
+            "FineMatching requires matching tensor shapes; got feat_f0={left_dims:?}, feat_f1={right_dims:?}"
         )));
     }
     if data.hw0_i.0 <= 0 || data.hw0_i.1 <= 0 || data.hw0_f.0 <= 0 || data.hw0_f.1 <= 0 {
@@ -112,23 +113,21 @@ fn validate_fine_match_inputs(
         ("b_ids", &data.b_ids, None),
     ] {
         let dims = tensor.size();
-        if dims.first().copied().unwrap_or_default() != expected {
+        let actual = if dims.is_empty() { 0 } else { dims[0] };
+        if actual != expected {
             return Err(LoftrError::InvalidConfig(format!(
-                "FineMatching `{label}` length mismatch: expected {expected}, got {:?}",
-                dims
+                "FineMatching `{label}` length mismatch: expected {expected}, got {dims:?}"
             )));
         }
         if let Some(last) = expected_last {
             if dims.len() != 2 || dims[1] != last {
                 return Err(LoftrError::InvalidConfig(format!(
-                    "FineMatching `{label}` expects [M,{last}]; got {:?}",
-                    dims
+                    "FineMatching `{label}` expects [M,{last}]; got {dims:?}"
                 )));
             }
         } else if dims.len() != 1 {
             return Err(LoftrError::InvalidConfig(format!(
-                "FineMatching `{label}` expects [M]; got {:?}",
-                dims
+                "FineMatching `{label}` expects [M]; got {dims:?}"
             )));
         }
     }
@@ -136,18 +135,7 @@ fn validate_fine_match_inputs(
 }
 
 fn perfect_square_side(window_area: i64) -> Result<i64, LoftrError> {
-    if window_area <= 0 {
-        return Err(LoftrError::InvalidConfig(format!(
-            "FineMatching requires positive window area; got {window_area}"
-        )));
-    }
-    let window_size = (window_area as f64).sqrt() as i64;
-    if window_size * window_size != window_area {
-        return Err(LoftrError::InvalidConfig(format!(
-            "FineMatching window area must be a perfect square; got {window_area}"
-        )));
-    }
-    Ok(window_size)
+    perfect_square_root(window_area, "FineMatching window area")
 }
 
 fn normalized_meshgrid(window_size: i64, device: tch::Device, kind: Kind) -> Tensor {
@@ -165,14 +153,13 @@ fn scale_factor_for_matches(
     data: &FineMatchingData,
     device: tch::Device,
 ) -> Result<Tensor, LoftrError> {
-    let scale = data.hw0_i.0 as f64 / data.hw0_f.0 as f64;
+    let scale = i64_pair_ratio_to_f64(data.hw0_i.0, data.hw0_f.0, "fine match scale")?;
     match &data.scale1 {
         Some(scale1) => {
             let dims = scale1.size();
             if dims.len() != 1 {
                 return Err(LoftrError::InvalidConfig(format!(
-                    "FineMatching scale1 expects [B]; got {:?}",
-                    dims
+                    "FineMatching scale1 expects [B]; got {dims:?}"
                 )));
             }
             let b_ids = data.b_ids.f_to_device(device)?.f_to_kind(Kind::Int64)?;
@@ -183,18 +170,17 @@ fn scale_factor_for_matches(
                 .unsqueeze(1)
                 * scale)
         }
-        None => Ok(Tensor::from(scale as f32).to_device(device).reshape([1, 1])),
+        None => Ok(Tensor::from(scale).to_device(device).reshape([1, 1])),
     }
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
     use tch::Device;
 
     #[test]
-    fn empty_matches_return_coarse_points() {
+    fn empty_matches_return_coarse_points() -> Result<(), LoftrError> {
         let data = FineMatchingData {
             hw0_i: (16, 16),
             hw0_f: (8, 8),
@@ -204,19 +190,18 @@ mod tests {
             b_ids: Tensor::zeros([0], (Kind::Int64, Device::Cpu)),
             scale1: None,
         };
-        let out = FineMatching
-            .forward(
-                &Tensor::zeros([0, 9, 4], (Kind::Float, Device::Cpu)),
-                &Tensor::zeros([0, 9, 4], (Kind::Float, Device::Cpu)),
-                &data,
-            )
-            .expect("fine matching");
+        let out = FineMatching::forward(
+            &Tensor::zeros([0, 9, 4], (Kind::Float, Device::Cpu)),
+            &Tensor::zeros([0, 9, 4], (Kind::Float, Device::Cpu)),
+            &data,
+        )?;
         assert_eq!(out.mkpts0_f.size(), vec![0, 2]);
         assert_eq!(out.mkpts1_f.size(), vec![0, 2]);
+        Ok(())
     }
 
     #[test]
-    fn forward_produces_offset_for_peaked_heatmap() {
+    fn forward_produces_offset_for_peaked_heatmap() -> Result<(), LoftrError> {
         let feat_f0 =
             Tensor::from_slice(&[0.0_f32, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0]).view([1, 9, 1]);
         let feat_f1 =
@@ -231,17 +216,16 @@ mod tests {
             scale1: None,
         };
 
-        let out = FineMatching
-            .forward(&feat_f0, &feat_f1, &data)
-            .expect("fine matching");
+        let out = FineMatching::forward(&feat_f0, &feat_f1, &data)?;
         assert_eq!(out.mkpts0_f.size(), vec![1, 2]);
         assert_eq!(out.mkpts1_f.size(), vec![1, 2]);
         assert!(out.mkpts1_f.double_value(&[0, 0]) > 101.5);
         assert!(out.mkpts1_f.double_value(&[0, 1]) > 201.5);
+        Ok(())
     }
 
     #[test]
-    fn forward_uses_batch_scale1_when_present() {
+    fn forward_uses_batch_scale1_when_present() -> Result<(), LoftrError> {
         let feat_f0 = Tensor::ones([2, 9, 1], (Kind::Float, Device::Cpu));
         let mut right_values = vec![0.0_f32; 18];
         right_values[2] = 8.0;
@@ -257,11 +241,10 @@ mod tests {
             scale1: Some(Tensor::from_slice(&[1.0_f32, 2.0])),
         };
 
-        let out = FineMatching
-            .forward(&feat_f0, &feat_f1, &data)
-            .expect("fine matching");
+        let out = FineMatching::forward(&feat_f0, &feat_f1, &data)?;
         let first_x = out.mkpts1_f.double_value(&[0, 0]);
         let second_x = out.mkpts1_f.double_value(&[1, 0]);
         assert!(second_x > first_x + 1.0);
+        Ok(())
     }
 }

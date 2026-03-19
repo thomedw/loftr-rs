@@ -1,6 +1,10 @@
 use tch::{Kind, Tensor};
 
-use crate::{error::LoftrError, loftr_config::MatchCoarseConfig};
+use crate::{
+    error::LoftrError,
+    loftr_config::MatchCoarseConfig,
+    numeric::{i64_pair_ratio_to_f64, i64_to_f64},
+};
 
 const INF: f64 = 1e9;
 
@@ -54,8 +58,8 @@ impl CoarseMatching {
     ) -> Result<CoarseMatchingOutput, LoftrError> {
         validate_coarse_matching_inputs(feat_c0, feat_c1, data, mask_c0, mask_c1)?;
 
-        let feat_c0 = feat_c0 / (feat_c0.size()[2] as f64).sqrt();
-        let feat_c1 = feat_c1 / (feat_c1.size()[2] as f64).sqrt();
+        let feat_c0 = feat_c0 / i64_to_f64(feat_c0.size()[2], "feat_c0 channel dim")?.sqrt();
+        let feat_c1 = feat_c1 / i64_to_f64(feat_c1.size()[2], "feat_c1 channel dim")?.sqrt();
         let mut sim_matrix = Tensor::einsum("nlc,nsc->nls", &[&feat_c0, &feat_c1], None::<&[i64]>)
             / self.config.dsmax_temperature;
         if let (Some(mask_c0), Some(mask_c1)) = (mask_c0, mask_c1) {
@@ -74,7 +78,7 @@ impl CoarseMatching {
         let conf_matrix = sim_matrix.softmax(1, Kind::Float) * sim_matrix.softmax(2, Kind::Float);
 
         let threshold_mask =
-            confidence_threshold_mask(&conf_matrix, data, self.config.thr, self.config.border_rm)?;
+            confidence_threshold_mask(&conf_matrix, data, self.config.thr, self.config.border_rm);
         let mutual_mask = conf_matrix
             .f_eq_tensor(&conf_matrix.max_dim(2, true).0)?
             .logical_and(&conf_matrix.f_eq_tensor(&conf_matrix.max_dim(1, true).0)?);
@@ -137,20 +141,18 @@ fn validate_coarse_matching_inputs(
     let right_dims = feat_c1.size();
     if left_dims.len() != 3 || right_dims.len() != 3 {
         return Err(LoftrError::InvalidConfig(format!(
-            "CoarseMatching expects [N,L,C] tensors; got feat_c0={:?}, feat_c1={:?}",
-            left_dims, right_dims
+            "CoarseMatching expects [N,L,C] tensors; got feat_c0={left_dims:?}, feat_c1={right_dims:?}"
         )));
     }
     if left_dims[0] != right_dims[0] || left_dims[2] != right_dims[2] {
         return Err(LoftrError::InvalidConfig(format!(
-            "CoarseMatching batch/channel mismatch: feat_c0={:?}, feat_c1={:?}",
-            left_dims, right_dims
+            "CoarseMatching batch/channel mismatch: feat_c0={left_dims:?}, feat_c1={right_dims:?}"
         )));
     }
     if left_dims[1] != data.hw0_c.0 * data.hw0_c.1 || right_dims[1] != data.hw1_c.0 * data.hw1_c.1 {
         return Err(LoftrError::InvalidConfig(format!(
-            "CoarseMatching hw*_c mismatch: feat_c0={:?}, feat_c1={:?}, hw0_c={:?}, hw1_c={:?}",
-            left_dims, right_dims, data.hw0_c, data.hw1_c
+            "CoarseMatching hw*_c mismatch: feat_c0={left_dims:?}, feat_c1={right_dims:?}, hw0_c={:?}, hw1_c={:?}",
+            data.hw0_c, data.hw1_c
         )));
     }
     if let Some(mask) = mask_c0 {
@@ -181,7 +183,7 @@ fn confidence_threshold_mask(
     data: &CoarseMatchingData,
     threshold: f64,
     border_rm: i64,
-) -> Result<Tensor, LoftrError> {
+) -> Tensor {
     let n = conf_matrix.size()[0];
     let h0 = data.hw0_c.0;
     let w0 = data.hw0_c.1;
@@ -189,10 +191,10 @@ fn confidence_threshold_mask(
     let w1 = data.hw1_c.1;
     let threshold_mask = conf_matrix.gt(threshold);
     let border_mask = border_validity_mask(h0, w0, h1, w1, border_rm, conf_matrix.device());
-    Ok(threshold_mask
+    threshold_mask
         .reshape([n, h0, w0, h1, w1])
         .logical_and(&border_mask)
-        .reshape([n, h0 * w0, h1 * w1]))
+        .reshape([n, h0 * w0, h1 * w1])
 }
 
 fn border_validity_mask(
@@ -237,9 +239,9 @@ fn scaled_factors(
     device: tch::Device,
 ) -> Result<Tensor, LoftrError> {
     let scale = if use_left {
-        data.hw0_i.0 as f64 / data.hw0_c.0 as f64
+        i64_pair_ratio_to_f64(data.hw0_i.0, data.hw0_c.0, "left scale")?
     } else {
-        data.hw1_i.0 as f64 / data.hw1_c.0 as f64
+        i64_pair_ratio_to_f64(data.hw1_i.0, data.hw1_c.0, "right scale")?
     };
     let per_batch = if use_left { &data.scale0 } else { &data.scale1 };
     match per_batch {
@@ -249,7 +251,7 @@ fn scaled_factors(
             .index_select(0, &b_ids.f_to_device(device)?.f_to_kind(Kind::Int64)?)
             .unsqueeze(1)
             * scale),
-        None => Ok(Tensor::from(scale as f32).to_device(device).reshape([1, 1])),
+        None => Ok(Tensor::from(scale).to_device(device).reshape([1, 1])),
     }
 }
 
@@ -261,38 +263,34 @@ fn coarse_points(indices: &Tensor, width: i64, scale: Tensor) -> Tensor {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::loftr_config::LoftrConfig;
     use tch::Device;
 
     #[test]
-    fn dual_softmax_identity_features_match_diagonal() {
+    fn dual_softmax_identity_features_match_diagonal() -> Result<(), LoftrError> {
         let config = LoftrConfig::outdoor();
         let matcher = CoarseMatching::new(&MatchCoarseConfig {
             border_rm: 0,
             ..config.match_coarse
-        })
-        .expect("matcher");
+        })?;
         let feat_c0 = Tensor::eye(4, (Kind::Float, Device::Cpu)).view([1, 4, 4]);
         let feat_c1 = Tensor::eye(4, (Kind::Float, Device::Cpu)).view([1, 4, 4]);
-        let out = matcher
-            .forward(
-                &feat_c0,
-                &feat_c1,
-                &CoarseMatchingData {
-                    hw0_i: (8, 8),
-                    hw1_i: (8, 8),
-                    hw0_c: (2, 2),
-                    hw1_c: (2, 2),
-                    scale0: None,
-                    scale1: None,
-                },
-                None,
-                None,
-            )
-            .expect("forward");
+        let out = matcher.forward(
+            &feat_c0,
+            &feat_c1,
+            &CoarseMatchingData {
+                hw0_i: (8, 8),
+                hw1_i: (8, 8),
+                hw0_c: (2, 2),
+                hw1_c: (2, 2),
+                scale0: None,
+                scale1: None,
+            },
+            None,
+            None,
+        )?;
         assert_eq!(out.b_ids.size(), vec![4]);
         assert_eq!(out.i_ids.size(), vec![4]);
         assert_eq!(out.j_ids.size(), vec![4]);
@@ -300,31 +298,31 @@ mod tests {
         assert!(out.mconf.min().double_value(&[]) > 0.2);
         assert_eq!(out.mkpts0_c.size(), vec![4, 2]);
         assert_eq!(out.mkpts1_c.size(), vec![4, 2]);
+        Ok(())
     }
 
     #[test]
-    fn border_mask_removes_all_matches_on_tiny_grid() {
+    fn border_mask_removes_all_matches_on_tiny_grid() -> Result<(), LoftrError> {
         let config = LoftrConfig::outdoor();
-        let matcher = CoarseMatching::new(&config.match_coarse).expect("matcher");
+        let matcher = CoarseMatching::new(&config.match_coarse)?;
         let feat_c0 = Tensor::eye(4, (Kind::Float, Device::Cpu)).view([1, 4, 4]);
         let feat_c1 = Tensor::eye(4, (Kind::Float, Device::Cpu)).view([1, 4, 4]);
-        let out = matcher
-            .forward(
-                &feat_c0,
-                &feat_c1,
-                &CoarseMatchingData {
-                    hw0_i: (8, 8),
-                    hw1_i: (8, 8),
-                    hw0_c: (2, 2),
-                    hw1_c: (2, 2),
-                    scale0: None,
-                    scale1: None,
-                },
-                None,
-                None,
-            )
-            .expect("forward");
+        let out = matcher.forward(
+            &feat_c0,
+            &feat_c1,
+            &CoarseMatchingData {
+                hw0_i: (8, 8),
+                hw1_i: (8, 8),
+                hw0_c: (2, 2),
+                hw1_c: (2, 2),
+                scale0: None,
+                scale1: None,
+            },
+            None,
+            None,
+        )?;
         assert_eq!(out.b_ids.size(), vec![0]);
         assert_eq!(out.mconf.size(), vec![0]);
+        Ok(())
     }
 }

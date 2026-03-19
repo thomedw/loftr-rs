@@ -49,6 +49,7 @@ pub struct LoftrConfig {
 }
 
 impl LoftrConfig {
+    #[must_use]
     pub fn outdoor() -> Self {
         Self {
             backbone_type: String::from("ResNetFPN"),
@@ -97,6 +98,7 @@ impl LoftrConfig {
         }
     }
 
+    #[must_use]
     pub fn indoor_new() -> Self {
         let mut config = Self::outdoor();
         config.coarse.temp_bug_fix = true;
@@ -111,7 +113,6 @@ impl Default for LoftrConfig {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
 
@@ -135,7 +136,7 @@ mod tests {
         let indoor = LoftrConfig::indoor_new();
         assert!(indoor.coarse.temp_bug_fix);
         assert_eq!(indoor.backbone_type, outdoor.backbone_type);
-        assert_eq!(indoor.match_coarse.thr, outdoor.match_coarse.thr);
+        assert!((indoor.match_coarse.thr - outdoor.match_coarse.thr).abs() < f64::EPSILON);
         assert_eq!(indoor.fine, outdoor.fine);
     }
 }

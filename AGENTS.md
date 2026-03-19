@@ -95,9 +95,10 @@ Internal LoFTR building blocks such as the backbone, transformer, attention, and
 - Rust edition **2024**, MSRV **1.85.0**
 - Run `rustfmt`, `clippy`, and the relevant tests before every commit
 - Warnings are denied in CI
+- The workspace enables `clippy::all`, `clippy::cargo`, and `clippy::pedantic`
 - Prefer **borrowing over cloning**, especially for tensors and image buffers
 - Keep the public API narrow and stable
-- No `unwrap()` or `expect()` in library code — propagate errors with `?`
+- Do not use `unwrap()` or `expect()` in production code, tests, or examples
 - Follow [Conventional Commits](https://www.conventionalcommits.org): `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `ci:`, `chore:`
 
 ### Documentation
@@ -151,8 +152,8 @@ Rules:
 
 - Use `thiserror` for library-facing error types
 - Prefer descriptive error variants with context
-- Do not use `panic!()`, `.unwrap()`, or `.expect()` in library code
-- In tests, `.expect()` is acceptable when it makes failures clearer
+- Do not use `.unwrap()` or `.expect()` in library code, tests, or examples
+- Prefer explicit `match` handling or `Result`-returning tests when failures need context
 
 ### Performance
 

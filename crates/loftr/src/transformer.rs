@@ -74,7 +74,7 @@ impl LoFTREncoderLayer {
                 d_model * 2,
                 linear_config,
             ))
-            .add_fn(|x| x.relu())
+            .add_fn(Tensor::relu)
             .add(nn::linear(
                 vs / "mlp" / "2",
                 d_model * 2,
@@ -211,42 +211,40 @@ fn validate_sequence_tensor(tensor: &Tensor, label: &str) -> Result<(), LoftrErr
     let dims = tensor.size();
     if dims.len() != 3 {
         return Err(LoftrError::InvalidInput(format!(
-            "LocalFeatureTransformer `{label}` expects [N,L,C]; got {:?}",
-            dims
+            "LocalFeatureTransformer `{label}` expects [N,L,C]; got {dims:?}"
         )));
     }
     Ok(())
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::loftr_config::LoftrConfig;
     use tch::{Device, Kind};
 
     #[test]
-    fn encoder_layer_preserves_shape() {
+    fn encoder_layer_preserves_shape() -> Result<(), LoftrError> {
         let vs = nn::VarStore::new(Device::Cpu);
-        let layer = LoFTREncoderLayer::new(&vs.root(), 256, 8, "linear").expect("encoder layer");
+        let layer = LoFTREncoderLayer::new(&vs.root(), 256, 8, "linear")?;
         let x = Tensor::randn([2, 12, 256], (Kind::Float, Device::Cpu));
         let source = Tensor::randn([2, 15, 256], (Kind::Float, Device::Cpu));
-        let out = layer.forward(&x, &source, None, None).expect("forward");
+        let out = layer.forward(&x, &source, None, None)?;
         assert_eq!(out.size(), vec![2, 12, 256]);
+        Ok(())
     }
 
     #[test]
-    fn transformer_preserves_feature_shapes() {
+    fn transformer_preserves_feature_shapes() -> Result<(), LoftrError> {
         let vs = nn::VarStore::new(Device::Cpu);
         let config = LoftrConfig::outdoor().coarse;
-        let transformer = LocalFeatureTransformer::new(&vs.root(), &config).expect("transformer");
+        let transformer = LocalFeatureTransformer::new(&vs.root(), &config)?;
         let feat0 = Tensor::randn([1, 24, 256], (Kind::Float, Device::Cpu));
         let feat1 = Tensor::randn([1, 30, 256], (Kind::Float, Device::Cpu));
-        let (out0, out1) = transformer
-            .forward(&feat0, &feat1, None, None)
-            .expect("forward");
+        let (out0, out1) = transformer.forward(&feat0, &feat1, None, None)?;
         assert_eq!(out0.size(), vec![1, 24, 256]);
         assert_eq!(out1.size(), vec![1, 30, 256]);
+        Ok(())
     }
 
     #[test]
@@ -261,13 +259,15 @@ mod tests {
             attention: config.attention,
             temp_bug_fix: false,
         };
-        let transformer =
-            LocalFeatureTransformer::new(&vs.root(), &transformer_config).expect("transformer");
+        let transformer = match LocalFeatureTransformer::new(&vs.root(), &transformer_config) {
+            Ok(transformer) => transformer,
+            Err(err) => panic!("transformer construction failed unexpectedly: {err}"),
+        };
         let feat0 = Tensor::randn([1, 12, 64], (Kind::Float, Device::Cpu));
         let feat1 = Tensor::randn([1, 12, 128], (Kind::Float, Device::Cpu));
-        let err = transformer
-            .forward(&feat0, &feat1, None, None)
-            .expect_err("wrong dim");
-        assert!(format!("{err}").contains("expected feature dim"));
+        match transformer.forward(&feat0, &feat1, None, None) {
+            Ok(_) => panic!("wrong feature dim should fail"),
+            Err(err) => assert!(format!("{err}").contains("expected feature dim")),
+        }
     }
 }

@@ -17,6 +17,7 @@ doc-only = ["tch/doc-only"]
 download-libtorch = ["tch/download-libtorch"]
 
 [dependencies]
+num-traits = { workspace = true }
 serde = { workspace = true }
 tch = { workspace = true }
 thiserror = { workspace = true }
@@ -30,4 +31,3 @@ features = ["doc-only"]
 
 [lints]
 workspace = true
-
