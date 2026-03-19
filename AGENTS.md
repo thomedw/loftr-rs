@@ -9,7 +9,7 @@ Guidance for AI agents and human contributors working in this repository.
 - The workspace currently contains one publishable crate: `crates/loftr`
 - The public API is intentionally small and high-level
 - Pretrained weights are generated locally and must not be committed to git
-- The root `Cargo.lock` is intentionally gitignored because this repo is maintained as a library workspace
+- The root `Cargo.lock` is tracked because release-plz updates it in release PRs
 
 ---
 
@@ -30,6 +30,7 @@ cargo llvm-cov --workspace --features download-libtorch --html --output-dir targ
 cargo test --doc -p loftr --features doc-only
 cargo deny check
 cargo publish --dry-run -p loftr --features download-libtorch
+cargo install --locked release-plz
 ```
 
 Install `cargo-llvm-cov` once before using the local coverage commands:
@@ -51,8 +52,6 @@ just test
 just coverage
 just coverage-html
 just publish-dry-run
-just release-notes 0.1.0
-just changelog 0.1.0
 ```
 
 ### Scripts
@@ -60,9 +59,8 @@ just changelog 0.1.0
 ```bash
 ./scripts/generate_loftr_state_dict.sh
 ./scripts/prepare_test_fixtures.sh
-python3 scripts/release_workflow.py --help
 ./scripts/validate_loftr_against_kornia.sh <left> <right>
-git-cliff --config cliff.toml --tag v0.1.0 --output CHANGELOG.md
+release-plz update --allow-dirty
 ```
 
 ---
@@ -208,14 +206,13 @@ Rules:
 
 ### Release Workflow
 
-- Use the GitHub `Prepare Release PR` workflow from `main` to recover any unfinished prepared releases, then bump the next version and regenerate `CHANGELOG.md`
-- The shared release state machine lives in `scripts/release_workflow.py`; keep workflow YAML thin and move new release logic there
-- Merge the generated `release/v*` pull request; the resulting `push` to `main` triggers the GitHub `Publish Release` workflow automatically
-- The publish workflow must not push commits to `main`; it only publishes the crate, pushes the tag, and creates the GitHub Release
-- The publish workflow validates that the `main` push is associated with the workflow-generated `release/v*` PR before it attempts crates.io authentication
-- `Prepare Release PR` is allowed to dispatch `Publish Release` in recovery mode so missed automated releases can be repaired without manual publishing
-- Configure crates.io Trusted Publishing for workflow file `publish.yml` and environment `release`
+- Use the GitHub `Release-plz` workflow on `main`; it opens or updates the automated release PR and publishes after that PR is merged
+- The release PR is expected to touch `Cargo.toml`, `CHANGELOG.md`, and `Cargo.lock`
+- The publish step must not push commits to `main`; it only publishes the crate, pushes the tag, and creates the GitHub Release
+- Configure crates.io Trusted Publishing for workflow file `release-plz.yml` and environment `release`
 - Do not reintroduce a long-lived `CRATES_IO_TOKEN` secret without a clear reason
+- The default `GITHUB_TOKEN` will not trigger CI on release PRs; if automatic release-PR checks matter, use a GitHub App token or machine-user PAT later
+- For local previews, use `release-plz update --allow-dirty` in a disposable clone or worktree instead of running it in the main checkout
 
 ---
 
