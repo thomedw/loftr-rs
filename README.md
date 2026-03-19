@@ -2,6 +2,9 @@
 
 Rust workspace for a native [`tch`](https://crates.io/crates/tch)-based implementation of LoFTR.
 
+`loftr-rs` is currently alpha-quality software. Expect APIs, docs, and runtime behavior to change
+before `1.0`, and validate results carefully before relying on it in production workflows.
+
 ## Demo
 
 <table>
@@ -46,6 +49,12 @@ Not included in v0.1:
 - panorama stitching helpers
 - calibration pipelines
 - application-specific runtime glue
+
+## Upstream References
+
+- [LoFTR upstream](https://github.com/zju3dv/LoFTR)
+- [Kornia upstream](https://github.com/kornia/kornia)
+- [kornia-rs upstream](https://github.com/kornia/kornia-rs)
 
 ## Toolchain
 

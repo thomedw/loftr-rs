@@ -2,6 +2,9 @@
 
 Native Rust/tch LoFTR feature matching.
 
+This crate is alpha-quality. Expect APIs, docs, and runtime behavior to change before `1.0`, and
+validate results carefully before relying on it in production workflows.
+
 ## What This Crate Includes
 
 - LoFTR config presets
@@ -9,6 +12,12 @@ Native Rust/tch LoFTR feature matching.
 - loading Kornia-compatible state dict weights
 - pairwise feature matching
 - optional debug-stage dumps for validation
+
+## Upstream References
+
+- [LoFTR upstream](https://github.com/zju3dv/LoFTR)
+- [Kornia upstream](https://github.com/kornia/kornia)
+- [kornia-rs upstream](https://github.com/kornia/kornia-rs)
 
 ## Weights
 
@@ -42,4 +51,3 @@ let matches = model.forward(&image0, &image1)?;
 println!("match count = {}", matches.confidence.size()[0]);
 # Ok::<(), loftr::LoftrError>(())
 ```
-
