@@ -1,0 +1,49 @@
+[changelog]
+header = """
+# Changelog
+
+All notable changes to this project will be documented in this file.
+"""
+body = """
+{% if version %}
+## [{{ version }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}
+## [Unreleased]
+{% endif %}
+
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | striptags | trim }}
+
+{% for commit in commits %}
+- {% if commit.scope %}**{{ commit.scope }}:** {% endif %}{% if commit.breaking %}**BREAKING** {% endif %}{{ commit.message | split(pat="\n") | first | trim | upper_first }}
+{% endfor %}
+{% endfor %}
+"""
+trim = true
+render_always = false
+
+[git]
+conventional_commits = true
+filter_unconventional = true
+protect_breaking_commits = true
+tag_pattern = "^v[0-9].*$"
+sort_commits = "oldest"
+commit_parsers = [
+    { message = "^feat", group = "Features" },
+    { message = "^fix", group = "Bug Fixes" },
+    { message = "^refactor", group = "Refactoring" },
+    { message = "^perf", group = "Performance" },
+    { message = "^docs", group = "Documentation" },
+    { message = "^test", group = "Testing" },
+    { message = "^ci", group = "CI" },
+    { message = "^docs\\(changelog\\):", skip = true },
+    { message = "^chore\\(release\\):", skip = true },
+    { message = "^chore", group = "Chores" },
+    { body = ".*security", group = "Security" },
+    { message = "^revert", group = "Reverts" },
+    { message = ".*", group = "Other" },
+]
+
+[remote.github]
+owner = "thomedw"
+repo = "loftr-rs"
