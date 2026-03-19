@@ -35,11 +35,34 @@ jobs:
         toolchain: ["1.85.0", "stable"]
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.toolchain }}
       - uses: Swatinem/rust-cache@v2
+      - run: ./scripts/prepare_test_fixtures.sh
       - run: cargo test --workspace --features download-libtorch
+
+  parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@v2
+      - run: ./scripts/prepare_test_fixtures.sh
+      - run: |
+          ./scripts/validate_loftr_against_kornia.sh \
+            crates/loftr/tests/data/kn_church-2.jpg \
+            crates/loftr/tests/data/kn_church-8.jpg \
+            crates/loftr/tests/data/loftr_outdoor_state_dict.safetensors \
+            target/loftr_validation
 
   deny:
     runs-on: ubuntu-latest

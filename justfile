@@ -3,6 +3,9 @@ set positional-arguments
 fmt:
     cargo fmt --all
 
+prepare-test-fixtures:
+    ./scripts/prepare_test_fixtures.sh
+
 check:
     cargo check --workspace --all-targets --features download-libtorch
 
@@ -10,6 +13,7 @@ clippy:
     cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 test:
+    ./scripts/prepare_test_fixtures.sh
     cargo test --workspace --features download-libtorch
 
 publish-dry-run:

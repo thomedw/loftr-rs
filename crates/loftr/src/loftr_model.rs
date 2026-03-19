@@ -433,10 +433,6 @@ fn max_or_zero(tensor: &Tensor) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{env, fs, path::Path};
-
-    use image::{DynamicImage, imageops::FilterType};
-    use tch::Tensor;
 
     #[test]
     fn model_variable_names_match_kornia_prefixes() -> Result<(), LoftrError> {
@@ -470,69 +466,5 @@ mod tests {
         assert_eq!(out.keypoints0.size()[1], 2);
         assert_eq!(out.keypoints1.size()[1], 2);
         Ok(())
-    }
-
-    #[test]
-    #[ignore = "requires local weights and image paths via environment variables"]
-    fn exported_weights_match_local_pair() -> Result<(), Box<dyn std::error::Error>> {
-        let weights = required_env_var("LOFTR_TEST_WEIGHTS")?;
-        let left = required_env_var("LOFTR_TEST_LEFT")?;
-        let right = required_env_var("LOFTR_TEST_RIGHT")?;
-
-        let mut model = LoFTRModel::new(Device::Cpu, LoftrConfig::outdoor())?;
-        model.load_weights(Path::new(&weights))?;
-
-        let image0 = load_local_grayscale(Path::new(&left))?;
-        let image1 = load_local_grayscale(Path::new(&right))?;
-        let out = model.forward(&image0, &image1)?;
-        assert_eq!(out.keypoints0.size()[1], 2);
-        assert_eq!(out.keypoints1.size()[1], 2);
-        assert_eq!(out.confidence.size()[0], out.keypoints0.size()[0]);
-        Ok(())
-    }
-
-    #[test]
-    #[ignore = "writes Rust LoFTR stage stats for Python comparison"]
-    fn dump_local_stage_stats() -> Result<(), Box<dyn std::error::Error>> {
-        let weights = required_env_var("LOFTR_TEST_WEIGHTS")?;
-        let left = required_env_var("LOFTR_TEST_LEFT")?;
-        let right = required_env_var("LOFTR_TEST_RIGHT")?;
-        let output = match env::var("LOFTR_STAGE_DUMP") {
-            Ok(output) => output,
-            Err(_) => String::from("target/loftr_stage_stats_rust.json"),
-        };
-
-        let mut model = LoFTRModel::new(Device::Cpu, LoftrConfig::outdoor())?;
-        model.load_weights(&weights)?;
-
-        let image0 = load_local_grayscale(Path::new(&left))?;
-        let image1 = load_local_grayscale(Path::new(&right))?;
-        let debug = model.forward_debug(&image0, &image1)?;
-        fs::write(&output, serde_json::to_vec_pretty(&debug)?)?;
-        eprintln!("wrote {output:?}");
-        Ok(())
-    }
-
-    fn required_env_var(name: &str) -> Result<String, Box<dyn std::error::Error>> {
-        match env::var(name) {
-            Ok(value) => Ok(value),
-            Err(_) => Err(format!("missing environment variable {name}").into()),
-        }
-    }
-
-    fn load_local_grayscale(path: &Path) -> Result<Tensor, image::ImageError> {
-        let image = image::open(path)?;
-        let image = resize_for_loftr(&image).to_luma32f();
-        let height = i64::from(image.height());
-        let width = i64::from(image.width());
-        let data = image.into_raw();
-        Ok(Tensor::from_slice(&data)
-            .view([1, height, width])
-            .unsqueeze(0)
-            .to_kind(Kind::Float))
-    }
-
-    fn resize_for_loftr(image: &DynamicImage) -> DynamicImage {
-        image.resize_exact(960, 540, FilterType::Triangle)
     }
 }

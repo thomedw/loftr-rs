@@ -78,6 +78,26 @@ By default, this writes:
 artifacts/weights/loftr_outdoor_state_dict.safetensors
 ```
 
+## Test Fixtures
+
+The weighted end-to-end test now uses prepared fixtures under `crates/loftr/tests/data/`.
+
+Bootstrap them locally with:
+
+```bash
+./scripts/prepare_test_fixtures.sh
+```
+
+or:
+
+```bash
+just prepare-test-fixtures
+```
+
+CI prepares these fixtures automatically. If you run `cargo test` without them, the end-to-end
+test fails with a setup message instead of being ignored.
+`just test` bootstraps them for you before running the workspace test suite.
+
 ## Libtorch Setup
 
 This crate uses `tch`, so you need a working libtorch setup.
@@ -105,6 +125,7 @@ cargo test -p loftr --features download-libtorch
 ```bash
 just fmt
 just check
+just prepare-test-fixtures
 just test
 just publish-dry-run
 ```
