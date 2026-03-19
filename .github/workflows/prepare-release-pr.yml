@@ -7,6 +7,7 @@ jobs:
   prepare:
     runs-on: ubuntu-latest
     permissions:
+      actions: write
       contents: write
       issues: write
       pull-requests: write
@@ -30,74 +31,20 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Derive next release metadata
-        id: meta
+      - name: Recover unfinished releases and derive next release
+        id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          latest_tag="$(git tag --list 'v[0-9]*' --sort=-version:refname | head -n1)"
-          if [ -z "${latest_tag}" ]; then
-            echo "no existing release tag found; bootstrap the first release manually before using this workflow" >&2
-            exit 1
-          fi
-
-          current_version="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys; data = json.load(sys.stdin); pkg = next(p for p in data["packages"] if p["name"] == "loftr"); print(pkg["version"])')"
-          latest_version="${latest_tag#v}"
-          if [ "${current_version}" != "${latest_version}" ]; then
-            echo "workspace version ${current_version} does not match latest release tag ${latest_tag}; finish that release before preparing another one" >&2
-            exit 1
-          fi
-
-          commit_count="$(git rev-list --count --no-merges "${latest_tag}..HEAD")"
-          if [ "${commit_count}" = "0" ]; then
-            echo "no commits since ${latest_tag}; nothing to release" >&2
-            exit 1
-          fi
-
-          mkdir -p target
-          git log --no-merges --format='%s%x1f%b%x1e' "${latest_tag}..HEAD" > target/release-commits.txt
-
-          export CURRENT_VERSION="${current_version}"
-          export COMMITS_FILE="target/release-commits.txt"
-          next_version="$(python3 - <<'PY'
-          import os
-          import re
-
-          major, minor, patch = map(int, os.environ["CURRENT_VERSION"].split("."))
-          with open(os.environ["COMMITS_FILE"], "r", encoding="utf-8") as handle:
-              records = [record for record in handle.read().split("\x1e") if record.strip()]
-
-          breaking = False
-          has_feat = False
-          for record in records:
-              subject, body = (record.split("\x1f", 1) + [""])[:2]
-              subject = subject.strip()
-              body = body.strip()
-              if re.match(r"^[a-z]+(?:\([^)]+\))?!:", subject) or "BREAKING CHANGE:" in body or "BREAKING-CHANGE:" in body:
-                  breaking = True
-              if re.match(r"^feat(?:\([^)]+\))?:", subject):
-                  has_feat = True
-
-          if breaking:
-              print(f"{major + 1}.0.0")
-          elif has_feat:
-              print(f"{major}.{minor + 1}.0")
-          else:
-              print(f"{major}.{minor}.{patch + 1}")
-          PY
-          )"
-
-          tag="v${next_version}"
-          branch="release/${tag}"
-          title="chore(release): prepare ${tag}"
-          echo "latest_tag=${latest_tag}" >> "${GITHUB_OUTPUT}"
-          echo "version=${next_version}" >> "${GITHUB_OUTPUT}"
-          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
-          echo "branch=${branch}" >> "${GITHUB_OUTPUT}"
-          echo "title=${title}" >> "${GITHUB_OUTPUT}"
+          python3 scripts/release_workflow.py prepare \
+            --repo "${{ github.repository }}" \
+            --run-id "${{ github.run_id }}"
 
       - name: Bump workspace version
+        if: ${{ steps.prepare.outputs.create_pr == 'true' }}
         env:
-          NEXT_VERSION: ${{ steps.meta.outputs.version }}
+          NEXT_VERSION: ${{ steps.prepare.outputs.version }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -127,34 +74,37 @@ jobs:
           PY
 
       - name: Generate release notes
+        if: ${{ steps.prepare.outputs.create_pr == 'true' }}
         uses: orhun/git-cliff-action@v4
         with:
           config: cliff.toml
           args: >-
             --verbose
             --unreleased
-            --tag ${{ steps.meta.outputs.tag }}
+            --tag ${{ steps.prepare.outputs.tag }}
             --strip header
         env:
           OUTPUT: target/release-notes.md
           GITHUB_REPO: ${{ github.repository }}
 
       - name: Update changelog
+        if: ${{ steps.prepare.outputs.create_pr == 'true' }}
         uses: orhun/git-cliff-action@v4
         with:
           config: cliff.toml
           args: >-
             --verbose
-            --tag ${{ steps.meta.outputs.tag }}
+            --tag ${{ steps.prepare.outputs.tag }}
         env:
           OUTPUT: CHANGELOG.md
           GITHUB_REPO: ${{ github.repository }}
 
       - name: Write pull request body
+        if: ${{ steps.prepare.outputs.create_pr == 'true' }}
         env:
-          LATEST_TAG: ${{ steps.meta.outputs.latest_tag }}
-          TAG: ${{ steps.meta.outputs.tag }}
-          VERSION: ${{ steps.meta.outputs.version }}
+          LATEST_TAG: ${{ steps.prepare.outputs.latest_tag }}
+          TAG: ${{ steps.prepare.outputs.tag }}
+          VERSION: ${{ steps.prepare.outputs.version }}
         run: |
           set -euo pipefail
           {
@@ -171,6 +121,7 @@ jobs:
           } > target/release-pr-body.md
 
       - name: Ensure release label exists
+        if: ${{ steps.prepare.outputs.create_pr == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -183,6 +134,7 @@ jobs:
           fi
 
       - name: Create or update release PR
+        if: ${{ steps.prepare.outputs.create_pr == 'true' }}
         uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ github.token }}
@@ -192,10 +144,10 @@ jobs:
           author: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
           base: main
           body-path: target/release-pr-body.md
-          branch: ${{ steps.meta.outputs.branch }}
+          branch: ${{ steps.prepare.outputs.branch }}
           committer: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
-          commit-message: ${{ steps.meta.outputs.title }}
+          commit-message: ${{ steps.prepare.outputs.title }}
           delete-branch: false
           labels: |
             release:automated
-          title: ${{ steps.meta.outputs.title }}
+          title: ${{ steps.prepare.outputs.title }}
