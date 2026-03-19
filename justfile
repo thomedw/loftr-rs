@@ -28,10 +28,3 @@ coverage-html:
 
 publish-dry-run:
     cargo publish --dry-run -p loftr --features download-libtorch
-
-release-notes version:
-    mkdir -p target/release
-    git-cliff --config cliff.toml --unreleased --tag v{{version}} --strip header --output target/release/release-notes-v{{version}}.md
-
-changelog version:
-    git-cliff --config cliff.toml --tag v{{version}} --output CHANGELOG.md

@@ -2,55 +2,56 @@
 
 ## Checklist
 
-1. Confirm crates.io Trusted Publishing is configured for:
+1. Confirm GitHub Actions is allowed to create and approve pull requests in the repository settings.
+2. Confirm crates.io Trusted Publishing is configured for:
    - owner `thomedw`
    - repository `loftr-rs`
    - workflow file `publish.yml`
    - environment `release`
-2. Run:
+3. Run:
    - `just fmt`
    - `just check`
    - `just test`
    - `just publish-dry-run`
-3. Confirm weights are not staged.
-4. The repo does not track `Cargo.lock`; local commands may generate it, but git ignores it.
-5. Run the GitHub `Prepare Release PR` workflow from `main`.
-6. If the current workspace version is not fully released yet, `Prepare Release PR` will recover the missing release artifacts first by dispatching `Publish Release` on the original release-prep commit.
-7. Review the generated PR:
+4. Confirm weights are not staged.
+5. Merge the changes you want released into `main`.
+6. The `Publish` workflow on `main` will:
+   - run `release-plz release-pr`
+   - open or update the automated release PR when there is a releasable commit
+7. Review the generated release PR:
    - version bump in `Cargo.toml`
    - regenerated `CHANGELOG.md`
-   - release notes in the PR body
-8. If additional commits land on `main`, rerun `Prepare Release PR` before merge so the release PR stays current.
-9. Merge the release PR into `main`.
-10. The merge push to `main` will trigger the `Publish Release` workflow, which will:
+   - updated `Cargo.lock`
+8. Merge the release PR into `main`.
+9. The next `Publish` run on the merge push will:
    - authenticate to crates.io via Trusted Publishing
    - publish `loftr`
-   - create and push the annotated git tag `v<version>`
-   - create the GitHub Release from the generated notes
+   - create and push the git tag `v<version>`
+   - create the GitHub Release from the generated changelog
 
 ## Trusted Publishing Notes
 
+- The GitHub workflow does not use `rust-lang/crates-io-auth-action`.
 - The GitHub workflow does not use a long-lived `CRATES_IO_TOKEN`.
 - Real publishes depend on crates.io Trusted Publishing being enabled for this crate and repository.
-- The workflow requests an OIDC token with `id-token: write` and exchanges it with crates.io during the publish job.
+- The release job requests an OIDC token with `id-token: write`, and `release-plz release` exchanges it with crates.io when it needs a publish token.
 - The publish job uses the GitHub environment named `release`; the crates.io trusted publisher must be configured with the same environment.
-- crates.io Trusted Publishing does not support the `pull_request_target` event, so the publish workflow intentionally runs from the `push` to `main` created by merging the automated release PR.
-- Recovery dispatches also use `publish.yml`, so there is a single publish path for normal releases and missed-release repair.
-- The release-state logic is implemented in `scripts/release_workflow.py`; the workflow YAML should stay as thin orchestration around that script.
+- New crates still need one manual publish before Trusted Publishing can be used. `loftr` already satisfies that bootstrap requirement.
 
 ## Protected Branch Notes
 
 - The repository should require pull requests for `main`.
-- The publish workflow must not push commits to `main`; only the release PR updates tracked files.
-- The publish workflow validates that the `main` push came from the workflow-generated `release/v*` pull request before it attempts a publish.
-- `Prepare Release PR` may recover multiple unfinished prepared releases in order before it opens the next release PR.
+- `release-plz release-pr` updates tracked files only in its release PR; the publish step never pushes a commit to `main`.
+- If the workflow uses the default `GITHUB_TOKEN`, pull request checks on the release PR will not start automatically.
+- If you want release PR checks and tag-driven workflows to trigger automatically, switch the workflow to a GitHub App token or machine-user PAT later.
 - Prefer enabling “require branches to be up to date before merging” for the release PR so the generated changelog matches the commit set being released.
 
 ## Local Preview
 
-If you want to preview the release notes locally, install `git-cliff` and run:
+If you want a local simulation, use a disposable clone or worktree and run:
 
 ```bash
-git-cliff --config cliff.toml --unreleased --tag v0.1.0 --strip header --output target/release-notes.md
-git-cliff --config cliff.toml --tag v0.1.0 --output CHANGELOG.md
+cargo install --locked release-plz
+git clone . /tmp/loftr-rs-release-preview
+release-plz update --manifest-path /tmp/loftr-rs-release-preview/Cargo.toml --allow-dirty
 ```
