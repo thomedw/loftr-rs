@@ -2,6 +2,34 @@
 
 Rust workspace for a native [`tch`](https://crates.io/crates/tch)-based implementation of LoFTR.
 
+## Demo
+
+<table>
+  <tr>
+    <td align="center"><strong>Kornia reference</strong></td>
+    <td align="center"><strong><code>loftr-rs</code> visualizer</strong></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/kornia-matching-loftr.jpg" alt="Original Kornia LoFTR image matching demo" width="100%" /></td>
+    <td><img src="docs/images/loftr-rs-demo-rust.png" alt="Rust-generated loftr-rs image matching demo" width="100%" /></td>
+  </tr>
+</table>
+
+The left image is the original Kornia LoFTR application demo from the
+[Image Matching docs](https://kornia.readthedocs.io/en/latest/applications/image_matching.html).
+The right image is generated locally with the Rust visualizer example in this repo, using the same
+Kornia homography fixture inputs and a local LoFTR weight export:
+
+```bash
+python3 scripts/export_fixture_images.py /path/to/loftr_homo.pt /tmp/loftr-demo-inputs --prefix readme-demo
+cargo run -p loftr --example render_demo --features download-libtorch -- \
+  /path/to/loftr_outdoor_state_dict.safetensors \
+  /tmp/loftr-demo-inputs/readme-demo-image0.png \
+  /tmp/loftr-demo-inputs/readme-demo-image1.png \
+  docs/images/loftr-rs-demo-rust.png \
+  64
+```
+
 ## Current Scope
 
 The first public release is intentionally small:
@@ -76,4 +104,3 @@ For local parity checks against Kornia's Python LoFTR reference, use:
 ```bash
 ./scripts/validate_loftr_against_kornia.sh /path/to/left.jpg /path/to/right.jpg
 ```
-
