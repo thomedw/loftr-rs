@@ -1,3 +1,10 @@
+/// Backbone variants supported by this crate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackboneType {
+    /// The `ResNetFPN` backbone used by the reference `LoFTR` models.
+    ResNetFpn,
+}
+
 /// Backbone parameters for the `ResNetFPN` encoder used by `LoFTR`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResNetFpnConfig {
@@ -5,6 +12,24 @@ pub struct ResNetFpnConfig {
     pub initial_dim: i64,
     /// Output channel counts for the three residual stages.
     pub block_dims: [i64; 3],
+}
+
+/// Attention implementations supported by the `LoFTR` transformers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttentionType {
+    /// Linear attention used by the default `LoFTR` presets.
+    Linear,
+    /// Full attention supported by the internal transformer implementation.
+    Full,
+}
+
+/// Transformer layer ordering used by `LoFTR` encoder stacks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransformerLayerKind {
+    /// Attend within the same feature stream.
+    SelfAttention,
+    /// Attend across the left and right feature streams.
+    CrossAttention,
 }
 
 /// Transformer parameters shared by `LoFTR` coarse and fine stages.
@@ -16,12 +41,19 @@ pub struct TransformerConfig {
     pub d_ffn: i64,
     /// Number of attention heads.
     pub nhead: i64,
-    /// Ordered encoder stage pattern, usually alternating `"self"` and `"cross"`.
-    pub layer_names: Vec<String>,
-    /// Attention implementation name, such as `"linear"`.
-    pub attention: String,
+    /// Ordered encoder stage pattern, usually alternating self and cross attention.
+    pub layer_kinds: Vec<TransformerLayerKind>,
+    /// Attention implementation used by each encoder layer.
+    pub attention: AttentionType,
     /// Whether to use Kornia's temperature bug-fix behavior in positional encoding.
     pub temp_bug_fix: bool,
+}
+
+/// Coarse matcher implementations supported by this crate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatchType {
+    /// Dual-softmax matching from the reference `LoFTR` models.
+    DualSoftmax,
 }
 
 /// Matching parameters for the coarse `LoFTR` correspondence stage.
@@ -31,8 +63,8 @@ pub struct MatchCoarseConfig {
     pub thr: f64,
     /// Number of border cells to suppress on each coarse feature map edge.
     pub border_rm: i64,
-    /// Coarse matcher implementation name, currently expected to be `"dual_softmax"`.
-    pub match_type: String,
+    /// Coarse matcher implementation to use.
+    pub match_type: MatchType,
     /// Dual-softmax temperature scaling factor.
     pub dsmax_temperature: f64,
     /// Sinkhorn iteration count from the reference config.
@@ -57,9 +89,9 @@ pub struct FineConfig {
     /// Number of attention heads.
     pub nhead: i64,
     /// Ordered encoder stage pattern for the fine transformer.
-    pub layer_names: Vec<String>,
-    /// Attention implementation name, such as `"linear"`.
-    pub attention: String,
+    pub layer_kinds: Vec<TransformerLayerKind>,
+    /// Attention implementation used by each encoder layer.
+    pub attention: AttentionType,
 }
 
 /// High-level `LoFTR` model configuration.
@@ -68,8 +100,8 @@ pub struct FineConfig {
 /// fields when matching a known reference setup.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LoftrConfig {
-    /// Backbone implementation name, currently expected to be `"ResNetFPN"`.
-    pub backbone_type: String,
+    /// Backbone implementation to use.
+    pub backbone_type: BackboneType,
     /// Output stride pair `(coarse_stride, fine_stride)`.
     pub resolution: (i64, i64),
     /// Fine-stage local window size in feature-grid cells.
@@ -93,7 +125,7 @@ impl LoftrConfig {
     #[must_use]
     pub fn outdoor() -> Self {
         Self {
-            backbone_type: String::from("ResNetFPN"),
+            backbone_type: BackboneType::ResNetFpn,
             resolution: (8, 2),
             fine_window_size: 5,
             fine_concat_coarse_feat: true,
@@ -105,23 +137,23 @@ impl LoftrConfig {
                 d_model: 256,
                 d_ffn: 256,
                 nhead: 8,
-                layer_names: vec![
-                    String::from("self"),
-                    String::from("cross"),
-                    String::from("self"),
-                    String::from("cross"),
-                    String::from("self"),
-                    String::from("cross"),
-                    String::from("self"),
-                    String::from("cross"),
+                layer_kinds: vec![
+                    TransformerLayerKind::SelfAttention,
+                    TransformerLayerKind::CrossAttention,
+                    TransformerLayerKind::SelfAttention,
+                    TransformerLayerKind::CrossAttention,
+                    TransformerLayerKind::SelfAttention,
+                    TransformerLayerKind::CrossAttention,
+                    TransformerLayerKind::SelfAttention,
+                    TransformerLayerKind::CrossAttention,
                 ],
-                attention: String::from("linear"),
+                attention: AttentionType::Linear,
                 temp_bug_fix: false,
             },
             match_coarse: MatchCoarseConfig {
                 thr: 0.2,
                 border_rm: 2,
-                match_type: String::from("dual_softmax"),
+                match_type: MatchType::DualSoftmax,
                 dsmax_temperature: 0.1,
                 skh_iters: 3,
                 skh_init_bin_score: 1.0,
@@ -133,8 +165,11 @@ impl LoftrConfig {
                 d_model: 128,
                 d_ffn: 128,
                 nhead: 8,
-                layer_names: vec![String::from("self"), String::from("cross")],
-                attention: String::from("linear"),
+                layer_kinds: vec![
+                    TransformerLayerKind::SelfAttention,
+                    TransformerLayerKind::CrossAttention,
+                ],
+                attention: AttentionType::Linear,
             },
         }
     }

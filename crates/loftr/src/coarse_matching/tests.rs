@@ -8,7 +8,7 @@ fn dual_softmax_identity_features_match_diagonal() -> Result<(), LoftrError> {
     let matcher = CoarseMatching::new(&MatchCoarseConfig {
         border_rm: 0,
         ..config.match_coarse
-    })?;
+    });
     let feat_c0 = Tensor::eye(4, (Kind::Float, Device::Cpu)).view([1, 4, 4]);
     let feat_c1 = Tensor::eye(4, (Kind::Float, Device::Cpu)).view([1, 4, 4]);
     let out = matcher.forward(
@@ -38,7 +38,7 @@ fn dual_softmax_identity_features_match_diagonal() -> Result<(), LoftrError> {
 #[test]
 fn border_mask_removes_all_matches_on_tiny_grid() -> Result<(), LoftrError> {
     let config = LoftrConfig::outdoor();
-    let matcher = CoarseMatching::new(&config.match_coarse)?;
+    let matcher = CoarseMatching::new(&config.match_coarse);
     let feat_c0 = Tensor::eye(4, (Kind::Float, Device::Cpu)).view([1, 4, 4]);
     let feat_c1 = Tensor::eye(4, (Kind::Float, Device::Cpu)).view([1, 4, 4]);
     let out = matcher.forward(
