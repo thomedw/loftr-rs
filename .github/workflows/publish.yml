@@ -77,7 +77,15 @@ jobs:
           GITHUB_REPO: ${{ github.repository }}
 
       - name: Update changelog
-        run: python3 scripts/update_changelog.py CHANGELOG.md target/release-notes.md
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: >-
+            --verbose
+            --tag ${{ steps.meta.outputs.tag }}
+        env:
+          OUTPUT: CHANGELOG.md
+          GITHUB_REPO: ${{ github.repository }}
 
       - name: Add release notes to summary
         run: |
