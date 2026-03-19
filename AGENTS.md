@@ -9,7 +9,7 @@ Guidance for AI agents and human contributors working in this repository.
 - The workspace currently contains one publishable crate: `crates/loftr`
 - The public API is intentionally small and high-level
 - Pretrained weights are generated locally and must not be committed to git
-- The root `Cargo.lock` is tracked because release-plz updates it in release PRs
+- The root `Cargo.lock` is intentionally gitignored because this repo is maintained as a library workspace
 
 ---
 
@@ -207,7 +207,7 @@ Rules:
 ### Release Workflow
 
 - Use the GitHub `Publish` workflow on `main`; it opens or updates the automated release PR and publishes after that PR is merged
-- The release PR is expected to touch `Cargo.toml`, `CHANGELOG.md`, and `Cargo.lock`
+- The release PR is expected to touch `Cargo.toml` and `CHANGELOG.md`
 - The publish step must not push commits to `main`; it only publishes the crate, pushes the tag, and creates the GitHub Release
 - Configure crates.io Trusted Publishing for workflow file `publish.yml` and environment `release`
 - Do not reintroduce a long-lived `CRATES_IO_TOKEN` secret without a clear reason

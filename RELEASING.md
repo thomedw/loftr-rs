@@ -21,7 +21,6 @@
 7. Review the generated release PR:
    - version bump in `Cargo.toml`
    - regenerated `CHANGELOG.md`
-   - updated `Cargo.lock`
 8. Merge the release PR into `main`.
 9. The next `Publish` run on the merge push will:
    - authenticate to crates.io via Trusted Publishing
