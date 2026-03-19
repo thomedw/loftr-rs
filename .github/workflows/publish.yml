@@ -114,7 +114,7 @@ jobs:
         if: ${{ steps.state.outputs.crate_published != 'true' }}
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-        run: cargo publish -p loftr --locked --features download-libtorch
+        run: cargo publish -p loftr --features download-libtorch
 
       - name: Create annotated tag
         if: ${{ steps.meta.outputs.tag_exists != 'true' }}
