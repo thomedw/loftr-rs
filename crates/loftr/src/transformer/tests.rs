@@ -49,3 +49,18 @@ fn transformer_rejects_wrong_feature_dim() {
         Err(err) => assert!(format!("{err}").contains("expected feature dim")),
     }
 }
+
+#[test]
+fn transformer_accepts_masks_and_preserves_feature_shapes() -> Result<(), LoftrError> {
+    let vs = nn::VarStore::new(Device::Cpu);
+    let config = LoftrConfig::outdoor().coarse;
+    let transformer = LocalFeatureTransformer::new(&vs.root(), &config)?;
+    let feat0 = Tensor::randn([1, 8, 256], (Kind::Float, Device::Cpu));
+    let feat1 = Tensor::randn([1, 8, 256], (Kind::Float, Device::Cpu));
+    let mask0 = Tensor::from_slice(&[1_i64, 1, 1, 1, 0, 0, 0, 0]).view([1, 8]);
+    let mask1 = Tensor::from_slice(&[1_i64, 1, 1, 1, 1, 1, 0, 0]).view([1, 8]);
+    let (out0, out1) = transformer.forward(&feat0, &feat1, Some(&mask0), Some(&mask1))?;
+    assert_eq!(out0.size(), vec![1, 8, 256]);
+    assert_eq!(out1.size(), vec![1, 8, 256]);
+    Ok(())
+}

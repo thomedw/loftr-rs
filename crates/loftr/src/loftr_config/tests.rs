@@ -22,11 +22,18 @@ fn outdoor_config_matches_kornia_defaults() {
 }
 
 #[test]
-fn indoor_new_only_flips_temp_bug_fix() {
+fn indoor_matches_outdoor_defaults() {
     let outdoor = LoftrConfig::outdoor();
-    let indoor = LoftrConfig::indoor_new();
-    assert!(indoor.coarse.temp_bug_fix);
-    assert_eq!(indoor.backbone_type, outdoor.backbone_type);
-    assert!((indoor.match_coarse.thr - outdoor.match_coarse.thr).abs() < f64::EPSILON);
-    assert_eq!(indoor.fine, outdoor.fine);
+    let indoor = LoftrConfig::indoor();
+    assert_eq!(indoor, outdoor);
+}
+
+#[test]
+fn indoor_new_only_flips_temp_bug_fix() {
+    let indoor = LoftrConfig::indoor();
+    let indoor_new = LoftrConfig::indoor_new();
+    assert!(indoor_new.coarse.temp_bug_fix);
+    assert_eq!(indoor_new.backbone_type, indoor.backbone_type);
+    assert!((indoor_new.match_coarse.thr - indoor.match_coarse.thr).abs() < f64::EPSILON);
+    assert_eq!(indoor_new.fine, indoor.fine);
 }
