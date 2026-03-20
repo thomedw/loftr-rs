@@ -5,7 +5,7 @@ pr_name = "chore(release): prepare v{{ version }}"
 git_tag_name = "v{{ version }}"
 git_release_name = "loftr v{{ version }}"
 release_always = false
-release_commits = "^(feat|fix|perf|refactor)[(:]"
+release_commits = "^(feat|fix|perf|refactor|chore)[(:]"
 features_always_increment_minor = true
 semver_check = false
 
