@@ -174,10 +174,16 @@ impl LoftrConfig {
         }
     }
 
+    /// Returns the legacy indoor `LoFTR` preset used by Kornia's shared fixtures.
+    #[must_use]
+    pub fn indoor() -> Self {
+        Self::outdoor()
+    }
+
     /// Returns the indoor `LoFTR` preset with Kornia's temperature fix enabled.
     #[must_use]
     pub fn indoor_new() -> Self {
-        let mut config = Self::outdoor();
+        let mut config = Self::indoor();
         config.coarse.temp_bug_fix = true;
         config
     }
