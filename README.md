@@ -2,9 +2,6 @@
 
 Rust workspace for a native [`tch`](https://crates.io/crates/tch)-based implementation of LoFTR.
 
-`loftr-rs` is currently alpha-quality software. Expect APIs, docs, and runtime behavior to change
-before `1.0`, and validate results carefully before relying on it in production workflows.
-
 ## Demo
 
 <table>

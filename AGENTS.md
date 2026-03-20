@@ -207,6 +207,7 @@ Rules:
 ### Release Workflow
 
 - Use the GitHub `Publish` workflow on `main`; it opens or updates the automated release PR and publishes after that PR is merged
+- `release-plz` currently treats `feat:`, `fix:`, `perf:`, `refactor:`, `chore:`, and `docs:` squash-merge commits on `main` as releasable
 - The release PR is expected to touch `Cargo.toml` and `CHANGELOG.md`
 - The publish step must not push commits to `main`; it only publishes the crate, pushes the tag, and creates the GitHub Release
 - Configure crates.io Trusted Publishing for workflow file `publish.yml` and environment `release`

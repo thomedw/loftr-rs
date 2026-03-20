@@ -2,9 +2,6 @@
 
 Native Rust/tch LoFTR feature matching.
 
-This crate is alpha-quality. Expect APIs, docs, and runtime behavior to change before `1.0`, and
-validate results carefully before relying on it in production workflows.
-
 ## What This Crate Includes
 
 - LoFTR config presets
