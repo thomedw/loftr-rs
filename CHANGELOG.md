@@ -3,6 +3,22 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.1.1] - 2026-03-20
+
+
+
+### Documentation
+
+
+- Remove alpha wording and docs release note ([#23](https://github.com/thomedw/loftr-rs/pull/23))
+
+
+### Testing
+
+
+- Add kornia parity regression coverage ([#21](https://github.com/thomedw/loftr-rs/pull/21))
+
+
 ## [v0.1.0] - 2026-03-19
 
 
