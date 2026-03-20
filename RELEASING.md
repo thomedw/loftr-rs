@@ -17,7 +17,8 @@
 5. Merge the changes you want released into `main`.
 6. The `Publish` workflow on `main` will:
    - run `release-plz release-pr`
-   - open or update the automated release PR when there is a releasable commit
+   - open or update the automated release PR when there is a releasable squash-merge commit on `main`
+   - current releasable commit prefixes are `feat:`, `fix:`, `perf:`, `refactor:`, `chore:`, and `docs:`
 7. Review the generated release PR:
    - version bump in `Cargo.toml`
    - regenerated `CHANGELOG.md`
@@ -41,6 +42,7 @@
 
 - The repository should require pull requests for `main`.
 - `release-plz release-pr` updates tracked files only in its release PR; the publish step never pushes a commit to `main`.
+- With squash merges, the effective release trigger is the final squash commit title on `main`.
 - If the workflow uses the default `GITHUB_TOKEN`, pull request checks on the release PR will not start automatically.
 - If you want release PR checks and tag-driven workflows to trigger automatically, switch the workflow to a GitHub App token or machine-user PAT later.
 - Prefer enabling “require branches to be up to date before merging” for the release PR so the generated changelog matches the commit set being released.
